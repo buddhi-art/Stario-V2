@@ -1,138 +1,112 @@
-# Stario
+# Stario V2
 
-<img src="docs/representative.png" alt="Stario representative">
+<p align="center">
+  <img src="docs/representative.png" alt="Stario Banner" width="100%">
+</p>
 
-[![Build](https://img.shields.io/github/actions/workflow/status/albu-razvan/Stario/build.yml?label=Build)](https://github.com/albu-razvan/Stario/actions/workflows/build.yml)
-[<img src="https://shields.rbtlog.dev/simple/com.stario.launcher" alt="RB shield">](https://shields.rbtlog.dev/com.stario.launcher)
-[![Latest release](https://img.shields.io/github/downloads/albu-razvan/Stario/total?label=Download&logo=android&logoColor=white)](https://github.com/albu-razvan/Stario/releases/latest)
-[![Discord](https://img.shields.io/discord/1110537583726964820?label=Discord&logo=discord&logoColor=white)](https://discord.gg/WuVapMt9gY)
+<p align="center">
+  <a href="https://github.com/buddhi-art/Stario-V2/actions/workflows/build.yml">
+    <img src="https://img.shields.io/github/actions/workflow/status/buddhi-art/Stario-V2/build.yml?label=Build&style=flat-square" alt="Build Status">
+  </a>
+  <a href="https://github.com/buddhi-art/Stario-V2/releases/latest">
+    <img src="https://img.shields.io/github/v/release/buddhi-art/Stario-V2?label=Release&style=flat-square&color=blue" alt="Latest Release">
+  </a>
+  <a href="https://github.com/buddhi-art/Stario-V2/blob/main/LICENSE.md">
+    <img src="https://img.shields.io/badge/License-GPLv3-green.svg?style=flat-square" alt="License">
+  </a>
+  <a href="https://android.com">
+    <img src="https://img.shields.io/badge/Android-10.0%2B%20(API%2029%2B)-brightgreen.svg?style=flat-square&logo=android&logoColor=white" alt="Android Version">
+  </a>
+</p>
 
-## Deprecation Notice
+---
 
-> [!WARNING]
-> Stario began as a personal project inspired by Android’s flexibility and openness.
->
-> Unfortunately, the Android ecosystem has changed significantly in recent years. New platform restrictions, OEM limitations, tighter system integrations, and evolving Play ecosystem policies have made it increasingly difficult for independent developers to provide fully integrated experience across devices.
->
-> The September 2026 changes (read more at [Keep Android Open](https://keepandroidopen.org/)) are, to me, a clear signal of the direction Android is heading. While these changes may not impact Stario directly, they’ve collectively removed much of the motivation I had to continue pushing the project forward.
->
-> The project will remain open source for anyone interested in continuing development, or preserving the spirit of Android customization that inspired projects like this one in the first place.
->
-> Thank you to everyone who contributed, tested builds, submitted issues, translated the app, or used Stario over the years.
+## 🌟 About This Fork
 
-## Overview
+**Stario V2** is an actively maintained, modernized continuation of the Stario minimalist launcher. 
 
-Inspired by the minimalist phone concept, Stario aims to keep functionality and productivity at
-their peak in a simple and elegant format.
+When upstream development paused, this fork was created to preserve what makes Stario special—clarity, elegance, and distraction-free usability—while completely overhauling the underlying engine for modern Android:
 
-This repository contains the complete codebase for Stario, a full rewrite of the previous
-Stario Launcher. This version offers significant improvements in both performance and usability.
+* **Apple-Grade Fluid Physics**: Upgraded from rigid, time-based animators to continuous physical `SpringAnimation` engines with touch velocity handoff.
+* **120Hz & Zero-Jank Efficiency**: Eradicated background polling loops, redundant invalidations, and unbounded thread pools.
+* **Seamless Window Transitions**: Implemented icon-anchored scale-up launches and the Landmark Return Morph spring bounce.
+* **Lifecycle & Stability Hardening**: Resolved static observer leaks, TimSort contract bugs, and concurrency races.
 
-> **Note:** This repository replaces all previous Play Store versions of the app. Please 
-> note that **Stario v1.X is no longer supported**, and no further updates or maintenance will be 
-> provided.
+---
 
-## Features
+## ✨ Features
 
-- **Material You Support**  
-  Integrates seamlessly with Android’s Material You dynamic theming system, adapting colors based on
-  your wallpaper and device settings.
+### 🍏 Fluid Physical Motion
+* **Natural Spring Mechanics**: Sheets, dismissals, and wallpaper zooms calculate motion dynamically based on touch velocity and momentum ($\Delta v = 0$).
+* **Logarithmic Rubber-Banding**: Replaced canvas stretching with smooth, organic edge resistance following true Apple iOS curves.
+* **Spatial Continuity**: Replaced random trajectory wobbles with smooth, predictable `ArcMotion` paths.
 
-- **Application Customization**  
-  Customize your home screen with various icon packs and shapes to personalize your experience.
+### ⚡ 120Hz Buttery Smooth & Lightweight
+* **Zero Background Drain**: Sensors and clock redraw loops are strictly paused whenever the screen is off or the launcher is in the background.
+* **Optimized View Recycling**: ViewHolders and child layout managers in pinned widgets and search are cached and reused, eliminating frame drops.
+* **Bounded Resource Usage**: Replaced unbounded startup thread storms with CPU-aware thread pools running with background priority.
 
-- **Built-In Weather Widget**  
-  Check current weather conditions and forecasts right from your home screen.
+### 🚀 Icon-Anchored App Transitions
+* **Coordinate-Aware Launching**: Launches applications using `ActivityOptions.makeScaleUpAnimation` anchored to the clicked icon's screen position.
+* **Landmark Return Morph**: When swiping or tapping Home (`onNewIntent`), the returning icon plays a subtle spring rebound alongside wallpaper zoom restoration, masking system window pop-in.
 
-- **Global Search Integration**  
-  Perform fast, privacy-respecting searches using Kagi directly from the launcher.
+### 🎨 Minimalist Elegance & Productivity
+* **Material You Dynamic Theming**: Colors dynamically adapt to your wallpaper and Android palette.
+* **Custom App Drawer**: Categorize and group applications cleanly with custom icons, shapes, and hide options.
+* **Glance Extension**: Built-in weather forecast, calendar events, and media controls without battery-draining polling loops.
+* **Integrated Feed & Search**: Built-in RSS/Atom feed reader and fast global web/app search.
 
-- **Minimalistic Media Player Controls**  
-  Manage your media playback easily with integrated controls.
+---
 
-- **Application Categories**  
-  Organize your app drawer with customizable categories for better app management.
+## 📥 Download & Installation
 
-- **RSS/Atom Reader**  
-  Stay up-to-date with news and blog feeds via the integrated RSS/Atom reader.
+Grab the latest build directly from the **[GitHub Releases Page](https://github.com/buddhi-art/Stario-V2/releases/latest)**:
 
-- **Page Sorting**  
-  Easily reorder your home screen pages to suit your workflow.
+| Build Asset | Recommended For | Description |
+|---|---|---|
+| **`Stario-vX.XX.apk`** | **Most Users** | Fully signed and aligned release build. Tap to install directly on any device. |
+| **`Stario-vX.XX-debug.apk`** | **Developers / Testers** | Debug build with logging and symbols enabled for testing. |
+| **`Stario-vX.XX-unsigned.apk`** | **Packagers** | Raw unsigned release build for custom signing or repository packagers. |
 
-## Download
+### System Requirements
+* **Android 10.0+ (API level 29 or higher)**
+* Compatible with stock Android, Google Pixel, Samsung One UI, OnePlus/OxygenOS, Motorola, LineageOS, and custom ROMs.
 
-- Get the latest release of Stario from the [GitHub Releases page](https://github.com/albu-razvan/Stario/releases/latest).
-- Find Stario at [IzzyOnDroid](https://apt.izzysoft.de/packages/com.stario.launcher).
+---
 
-## Compatibility
+## 🛠️ Building from Source
 
-- Requires **Android SDK 29+** (Android 10.0 or later)
-- Compatible with AOSP and most major OEM devices
-- Should work with custom ROMs, though these are not officially tested — user feedback is welcome
+You can build Stario locally using the Gradle wrapper:
 
-## Development
+### Prerequisites
+* JDK 17 or higher
+* Android SDK (API 36 build-tools & platform installed)
 
-You can quickly set up the development environment using the provided Dockerfile:
-
-```bash
-docker build --platform linux/amd64 -t stario-dev .
-
-docker run --platform linux/amd64 --rm -it \
-  -v </path/to/output>:/usr/local/stario/build \
-  stario-dev
-```
-
-> Tip: Use `--rm` to automatically remove the container after use.
-
-## Building
-
-Should you wish to build the application yourself, run the build
-script from within the development environment:
+### Build Commands
 
 ```bash
-# Optionally, checkout to the tagged commit
-git checkout v2.9
+# Clone the repository
+git clone https://github.com/buddhi-art/Stario-V2.git
+cd Stario-V2
 
-./build.sh
+# Ensure gradlew has execute permission
+chmod +x gradlew
+
+# Build Debug APK (installs immediately via adb)
+./gradlew assembleDebug
+
+# Build Release APK
+./gradlew assembleRelease
 ```
 
-Alternatively, to also build a signed copy (APK and AAB), pass a keystore to the build script:
+Compiled APKs will be generated in:
+* `app/build/outputs/apk/debug/app-debug.apk`
+* `app/build/outputs/apk/release/app-release-unsigned.apk`
 
-```bash
-docker run --platform linux/amd64 --rm -it \
-  -v </path/to/output>:/usr/local/stario/build \
-  -v </path/to/keystore>:/usr/local/stario/keystore \
-  stario-dev
+---
 
-# Optionally, checkout to the tagged commit
-git checkout v2.9
-  
-./build.sh \
-  -K /usr/local/stario/keystore/keystore.jks \
-  -P keystore_password \
-  -a key_alias \
-  -p key_password
-```
+## 🤝 Acknowledgements & License
 
-## Reproducible Builds
-
-Check for RBs with the locally built unsigned APK and [apksigcopier](https://github.com/obfusk/apksigcopier). 
-
-Firstly, copy the signature from the signed APK onto your built unsigned APK:
-
-```bash
-apksigcopier copy signed-from-source.apk unsigned-built-locally.apk out.apk
-```
-
-Then compare the two APKs:
-
-```bash
-apksigcopier compare stario-from-source.apk stario-built-locally.apk
-```
-
-> NOTE: `apksigcopier compare` requires [apksigner](https://developer.android.com/tools/apksigner).
-
-## Join the Community
-
-Got questions or want to connect with other users and contributors? Join
-the [Stario Discord Server](https://discord.gg/WuVapMt9gY).
+* Originally created by [Razvan Albu](https://github.com/albu-razvan) and wonderful open-source contributors.
+* Maintained and modernized by [@buddhi-art](https://github.com/buddhi-art).
+* Licensed under the **GNU General Public License v3.0** (see [LICENSE.md](LICENSE.md)).
