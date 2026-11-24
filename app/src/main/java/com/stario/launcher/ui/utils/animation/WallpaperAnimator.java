@@ -18,10 +18,13 @@
 package com.stario.launcher.ui.utils.animation;
 
 import android.app.Activity;
-import android.os.Handler;
 import android.os.IBinder;
 import android.util.Log;
 import android.view.Window;
+
+import androidx.dynamicanimation.animation.FloatValueHolder;
+import androidx.dynamicanimation.animation.SpringAnimation;
+import androidx.dynamicanimation.animation.SpringForce;
 
 import com.stario.launcher.hidden.WallpaperManagerHidden;
 
@@ -29,59 +32,58 @@ import dev.rikka.tools.refine.Refine;
 
 public class WallpaperAnimator {
     private static final String TAG = "WallpaperAnimation";
-    private static final Handler handler = new Handler();
-    private static final float ANIMATION_FRAME_STEP = 0.005f;
-    private static final int TARGET_FRAME_COUNT = 30;
-    private static final int ANIMATION_FRAME_DELAY = 8;
+    private static final float SPRING_STIFFNESS = 250f;
+    private static final float SPRING_DAMPING = SpringForce.DAMPING_RATIO_NO_BOUNCY;
 
     private static WallpaperManagerHidden wallpaperManager;
     private static boolean hasLoggedMissingMethod = false;
     private static float lastRecordedZoomValue = 0;
-    private static Runnable zoomAnimator;
+    private static SpringAnimation zoomSpring;
+    private static FloatValueHolder zoomHolder;
+    private static IBinder currentToken;
 
     public static void updateZoom(Activity activity, float zoom) {
-        if (hasLoggedMissingMethod || zoom == lastRecordedZoomValue) {
+        if (hasLoggedMissingMethod || activity == null) {
             return;
         }
 
-        if (zoomAnimator != null) {
-            handler.removeCallbacks(zoomAnimator);
+        currentToken = getWindowToken(activity);
+        if (currentToken == null) {
+            return;
         }
 
-        float direction = Math.signum(zoom - lastRecordedZoomValue);
-        IBinder token = getWindowToken(activity);
-        zoomAnimator = new Runnable() {
-            @Override
-            public void run() {
-                if (token != null) {
-                    lastRecordedZoomValue += direction *
-                            Math.max(ANIMATION_FRAME_STEP,
-                                    Math.abs(zoom - lastRecordedZoomValue) / TARGET_FRAME_COUNT);
-                    if ((direction > 0 && lastRecordedZoomValue > zoom)
-                            || (direction < 0 && lastRecordedZoomValue < zoom)) {
-                        lastRecordedZoomValue = zoom;
-                    }
+        getWallpaperManager(activity);
 
+        if (zoomSpring == null) {
+            zoomHolder = new FloatValueHolder(lastRecordedZoomValue);
+            zoomSpring = new SpringAnimation(zoomHolder);
+
+            SpringForce spring = new SpringForce();
+            spring.setStiffness(SPRING_STIFFNESS);
+            spring.setDampingRatio(SPRING_DAMPING);
+            zoomSpring.setSpring(spring);
+
+            zoomSpring.addUpdateListener((animation, value, velocity) -> {
+                lastRecordedZoomValue = value;
+                if (currentToken != null && wallpaperManager != null) {
                     try {
-                        getWallpaperManager(activity)
-                                .setWallpaperZoomOut(token, lastRecordedZoomValue);
+                        wallpaperManager.setWallpaperZoomOut(currentToken, lastRecordedZoomValue);
                     } catch (NoSuchMethodError exception) {
                         if (!hasLoggedMissingMethod) {
                             Log.e(TAG, "WallpaperManager::setWallpaperZoomOut does not exist. This error message will not be shown again.");
                             hasLoggedMissingMethod = true;
                         }
-
-                        return;
-                    }
-
-                    if (lastRecordedZoomValue != zoom) {
-                        handler.postDelayed(this, ANIMATION_FRAME_DELAY);
+                        zoomSpring.cancel();
                     }
                 }
-            }
-        };
+            });
+        }
 
-        zoomAnimator.run();
+        if (zoom == lastRecordedZoomValue && !zoomSpring.isRunning()) {
+            return;
+        }
+
+        zoomSpring.animateToFinalPosition(zoom);
     }
 
     private static WallpaperManagerHidden getWallpaperManager(Activity activity) {
@@ -89,7 +91,7 @@ public class WallpaperAnimator {
             return wallpaperManager;
         }
 
-        wallpaperManager = Refine.unsafeCast(WallpaperManagerHidden.getInstance(activity));
+        wallpaperManager = Refine.unsafeCast(WallpaperManagerHidden.getInstance(activity.getApplicationContext()));
         return wallpaperManager;
     }
 

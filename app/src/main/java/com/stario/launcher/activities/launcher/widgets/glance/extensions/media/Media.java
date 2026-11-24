@@ -37,6 +37,7 @@ import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.ViewGroup;
@@ -94,6 +95,17 @@ public class Media extends GlanceDialogExtension {
 
     private final MediaSessionManager.OnActiveSessionsChangedListener sessionsChangedListener;
     private final Map<MediaController, MediaController.Callback> controllerCallbacks;
+    private final Runnable sliderUpdater = new Runnable() {
+        @Override
+        public void run() {
+            if (session != null && isPlaying()) {
+                updateSliderProgress(session.getMetadata());
+                handler.postDelayed(this, 1000);
+            } else {
+                stopSliderUpdates();
+            }
+        }
+    };
 
     private MediaSessionManager mediaSessionManager;
     private boolean sessionsListenerRegistered;
@@ -242,6 +254,15 @@ public class Media extends GlanceDialogExtension {
         super.onStart();
 
         attemptSessionListenerRegistration();
+        if (isPlaying()) {
+            startSliderUpdates();
+        }
+    }
+
+    @Override
+    public void onStop() {
+        stopSliderUpdates();
+        super.onStop();
     }
 
     private void attemptSessionListenerRegistration() {
@@ -261,6 +282,7 @@ public class Media extends GlanceDialogExtension {
 
     @Override
     public void onDestroy() {
+        stopSliderUpdates();
         if (mediaSessionManager != null && sessionsListenerRegistered) {
             mediaSessionManager.removeOnActiveSessionsChangedListener(sessionsChangedListener);
             sessionsListenerRegistered = false;
@@ -608,6 +630,7 @@ public class Media extends GlanceDialogExtension {
     }
 
     private void reset() {
+        stopSliderUpdates();
         playPause.setOnClickListener(null);
         rewind.setOnClickListener(null);
         skip.setOnClickListener(null);
@@ -687,22 +710,63 @@ public class Media extends GlanceDialogExtension {
         }
     }
 
-    private void updateSlider(MediaMetadata metadata) {
+    private boolean isPlaying() {
         if (session != null) {
-            PlaybackState playbackState = session.getPlaybackState();
+            PlaybackState state = session.getPlaybackState();
+            return state != null && state.getState() == PlaybackState.STATE_PLAYING;
+        }
+        return false;
+    }
 
-            if (playbackState != null && !skipUpdate) {
+    private void startSliderUpdates() {
+        stopSliderUpdates();
+        if (session != null) {
+            updateSliderProgress(session.getMetadata());
+            if (isPlaying()) {
+                handler.postDelayed(sliderUpdater, 1000);
+            }
+        }
+    }
+
+    private void stopSliderUpdates() {
+        handler.removeCallbacks(sliderUpdater);
+    }
+
+    private void updateSlider(MediaMetadata metadata) {
+        updateSliderProgress(metadata);
+        if (isPlaying()) {
+            startSliderUpdates();
+        } else {
+            stopSliderUpdates();
+        }
+    }
+
+    private void updateSliderProgress(@Nullable MediaMetadata metadata) {
+        if (session != null && slider != null && !skipUpdate) {
+            PlaybackState playbackState = session.getPlaybackState();
+            if (metadata == null) {
+                metadata = session.getMetadata();
+            }
+
+            if (playbackState != null && metadata != null) {
                 long duration = metadata.getLong(MediaMetadata.METADATA_KEY_DURATION);
-                float progress = (duration > 0) ? (float) playbackState.getPosition() / duration : 0;
+                long position = playbackState.getPosition();
+
+                if (playbackState.getState() == PlaybackState.STATE_PLAYING) {
+                    long timeDelta = SystemClock.elapsedRealtime() - playbackState.getLastPositionUpdateTime();
+                    if (timeDelta > 0) {
+                        position += (long) (timeDelta * playbackState.getPlaybackSpeed());
+                    }
+                }
+
+                float progress = (duration > 0) ? (float) position / duration : 0;
 
                 if (Float.isNaN(progress) || Float.isInfinite(progress)) {
                     progress = 0;
                 }
 
-                slider.getProgress().setValue(progress);
+                slider.getProgress().setValue(Math.max(0f, Math.min(1f, progress)));
             }
-
-            handler.postDelayed(() -> updateSlider(metadata), 200);
         }
     }
 
@@ -725,6 +789,7 @@ public class Media extends GlanceDialogExtension {
                         playPause.setTag(PLAYING);
                         slider.isPlaying().setValue(true);
                     }
+                    startSliderUpdates();
                 } else {
                     if (PLAYING.equals(playPause.getTag())) {
                         AnimatedVectorDrawable drawable =
@@ -739,12 +804,15 @@ public class Media extends GlanceDialogExtension {
                         playPause.setTag(PAUSED);
                         slider.isPlaying().setValue(false);
                     }
+                    stopSliderUpdates();
+                    updateSliderProgress(session.getMetadata());
                 }
             }
         }
     }
 
     public void disable() {
+        stopSliderUpdates();
         session = null;
         preview.setEnabled(isEnabled());
 

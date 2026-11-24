@@ -40,6 +40,8 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public final class ProfileApplicationManager {
     private static final String TAG = "ProfileApplicationManager";
@@ -53,6 +55,8 @@ public final class ProfileApplicationManager {
     private final SharedPreferences applicationLabels;
     private final PackageManager packageManager;
     private final IconPackManager iconPacks;
+    private final LauncherApps launcherApps;
+    private final LauncherApps.Callback callback;
     public final UserHandle handle;
 
     private boolean loaded;
@@ -60,8 +64,8 @@ public final class ProfileApplicationManager {
     ProfileApplicationManager(Stario stario, UserHandle handle) {
         this.visibleApplicationList = Collections.synchronizedList(new ArrayList<>());
         this.applicationList = Collections.synchronizedList(new ArrayList<>());
-        this.applicationMap = new HashMap<>();
-        this.listeners = Collections.synchronizedList(new ArrayList<>());
+        this.applicationMap = new ConcurrentHashMap<>();
+        this.listeners = new CopyOnWriteArrayList<>();
         this.applicationLabels = stario.getSharedPreferences(Entry.APPLICATION_LABELS);
         this.hiddenApplications = stario.getSharedPreferences(Entry.HIDDEN_APPS,
                 Integer.toString(handle.hashCode()));
@@ -70,9 +74,11 @@ public final class ProfileApplicationManager {
         this.loaded = false;
         this.handle = handle;
 
-        LauncherApps launcherApps = stario.getSystemService(LauncherApps.class);
-        LauncherApps.Callback callback = getReceiver(launcherApps);
-        launcherApps.registerCallback(callback);
+        this.launcherApps = stario.getSystemService(LauncherApps.class);
+        this.callback = getReceiver(this.launcherApps);
+        if (this.launcherApps != null) {
+            this.launcherApps.registerCallback(this.callback);
+        }
 
         this.iconPacks = IconPackManager.from(stario);
         Utils.submitTask(() -> loadApplications(stario));
@@ -484,6 +490,16 @@ public final class ProfileApplicationManager {
         if (listener != null) {
             listeners.remove(listener);
         }
+    }
+
+    public void destroy() {
+        if (launcherApps != null && callback != null) {
+            try {
+                launcherApps.unregisterCallback(callback);
+            } catch (Exception ignored) {
+            }
+        }
+        listeners.clear();
     }
 
     public boolean isVisibleToUser(LauncherApplication application) {

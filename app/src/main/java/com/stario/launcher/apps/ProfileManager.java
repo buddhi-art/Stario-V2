@@ -40,6 +40,7 @@ import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public final class ProfileManager {
     public static final String PROFILE_AVAILABLE_EXTRA = "com.stario.launcher.PROFILE_AVAILABLE_EXTRA";
@@ -61,7 +62,7 @@ public final class ProfileManager {
         instance = this;
 
         this.iconPacks = IconPackManager.from(stario, this::update);
-        this.listeners = Collections.synchronizedList(new ArrayList<>());
+        this.listeners = new CopyOnWriteArrayList<>();
         this.profilesList = new ArrayList<>();
         this.profilesMap = new HashMap<>();
 
@@ -83,7 +84,7 @@ public final class ProfileManager {
             UserHandle handle = profiles.get(index);
 
             ProfileApplicationManager manager = new ProfileApplicationManager(stario, handle);
-            if (owner != null) {
+            if (owner == null) {
                 owner = handle;
             }
 

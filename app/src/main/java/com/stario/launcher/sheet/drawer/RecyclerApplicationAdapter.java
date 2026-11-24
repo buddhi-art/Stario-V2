@@ -338,7 +338,7 @@ public abstract class RecyclerApplicationAdapter
                 LauncherApplication application = getApplication(index);
 
                 if (application != LauncherApplication.FALLBACK_APP) {
-                    application.launch(activity);
+                    application.launch(activity, icon != null ? icon : view);
                 }
             };
         }

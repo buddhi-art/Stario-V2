@@ -57,12 +57,42 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class Utils {
     public static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/W.X.Y.Z Mobile Safari/537.36 (compatible; Googlebot/2.1; +https://www.google.com/bot.html)";
 
     private static final String TAG = "com.stario.Utils";
-    private static final ExecutorService executorPool = Executors.newCachedThreadPool();
+    private static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
+    private static final int POOL_SIZE = Math.max(2, Math.min(4, CPU_COUNT));
+    private static final ExecutorService executorPool = createExecutorPool();
+
+    private static ExecutorService createExecutorPool() {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                POOL_SIZE,
+                POOL_SIZE,
+                60L,
+                TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(),
+                new ThreadFactory() {
+                    private final AtomicInteger count = new AtomicInteger(1);
+
+                    @Override
+                    public Thread newThread(Runnable r) {
+                        return new Thread(() -> {
+                            android.os.Process.setThreadPriority(android.os.Process.THREAD_PRIORITY_BACKGROUND);
+                            r.run();
+                        }, "Stario-Worker-" + count.getAndIncrement());
+                    }
+                }
+        );
+        executor.allowCoreThreadTimeOut(true);
+        return executor;
+    }
     private static final String[] IPV4_APIS = {
             "https://checkip.amazonaws.com/",
             "https://ipv4.icanhazip.com/",

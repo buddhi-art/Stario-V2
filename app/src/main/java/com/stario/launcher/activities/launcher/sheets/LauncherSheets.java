@@ -32,6 +32,8 @@ import com.stario.launcher.sheet.SheetsFocusController;
 import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.WeakHashMap;
 
 public class LauncherSheets {
     public static final String INTENT_SHEET_CLASS_EXTRA = "com.stario.launcher.INTENT_SHEET_CLASS_EXTRA";
@@ -39,8 +41,12 @@ public class LauncherSheets {
     public static final String ACTION_MOVE_SHEET = "com.stario.launcher.ACTION_MOVE_SHEET";
     public static final String ACTION_ADD_SHEET = "com.stario.launcher.ACTION_ADD_SHEET";
 
+    private static final Map<Launcher, BroadcastReceiver> RECEIVERS = new WeakHashMap<>();
+
     public static void attach(Launcher launcher,
                               SheetDialog.OnSlideListener slideListener) {
+        detach(launcher);
+
         SheetsFocusController controller = launcher.getSheetsController();
 
         controller.setSlideListener(slideListener);
@@ -51,7 +57,7 @@ public class LauncherSheets {
         filter.addAction(ACTION_MOVE_SHEET);
         filter.addAction(ACTION_REMOVE_SHEET);
 
-        LocalBroadcastManager.getInstance(launcher).registerReceiver(new BroadcastReceiver() {
+        BroadcastReceiver receiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 Class<? extends SheetDialogFragment>[] classes = getClasses(intent);
@@ -79,7 +85,24 @@ public class LauncherSheets {
                     }
                 }
             }
-        }, filter);
+        };
+
+        LocalBroadcastManager.getInstance(launcher).registerReceiver(receiver, filter);
+        RECEIVERS.put(launcher, receiver);
+    }
+
+    public static void detach(Launcher launcher) {
+        if (launcher == null) {
+            return;
+        }
+
+        BroadcastReceiver receiver = RECEIVERS.remove(launcher);
+        if (receiver != null) {
+            try {
+                LocalBroadcastManager.getInstance(launcher).unregisterReceiver(receiver);
+            } catch (Exception ignored) {
+            }
+        }
     }
 
     private static Class<? extends SheetDialogFragment>[] getClasses(Intent intent) {

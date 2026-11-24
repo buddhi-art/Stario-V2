@@ -19,7 +19,8 @@ package com.stario.launcher.utils.objects;
 
 import androidx.annotation.NonNull;
 
-import java.util.ArrayList;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class ObservableObject<A> {
     private final ClosedObservableObject<A> observable;
@@ -54,6 +55,10 @@ public class ObservableObject<A> {
         observable.addListener(listener);
     }
 
+    public void removeListener(@NonNull ObservableObject.OnSet<A> listener) {
+        observable.removeListener(listener);
+    }
+
     public void removeListeners() {
         observable.removeListeners();
     }
@@ -68,16 +73,20 @@ public class ObservableObject<A> {
 
     public static class ClosedObservableObject<B> {
         private B object;
-        private final ArrayList<OnSet<B>> listeners;
+        private final List<OnSet<B>> listeners;
 
         public ClosedObservableObject(B object) {
             this.object = object;
 
-            listeners = new ArrayList<>();
+            listeners = new CopyOnWriteArrayList<>();
         }
 
         public void addListener(@NonNull OnSet<B> listener) {
             listeners.add(listener);
+        }
+
+        public void removeListener(@NonNull OnSet<B> listener) {
+            listeners.remove(listener);
         }
 
         public B getObject() {

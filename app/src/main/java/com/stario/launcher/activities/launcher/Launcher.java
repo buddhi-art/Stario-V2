@@ -59,6 +59,7 @@ import com.stario.launcher.ui.popup.PopupMenu;
 import com.stario.launcher.ui.utils.HomeWatcher;
 import com.stario.launcher.ui.utils.UiUtils;
 import com.stario.launcher.ui.utils.animation.Animation;
+import com.stario.launcher.ui.utils.animation.AppTransitionManager;
 import com.stario.launcher.ui.utils.animation.WallpaperAnimator;
 import com.stario.launcher.utils.Utils;
 
@@ -378,13 +379,36 @@ public class Launcher extends ThemedActivity {
         searchWidget.detach();
         clockWidget.detach();
 
+        LauncherSheets.detach(this);
+        Measurements.unregisterContentObservers(this);
+
         super.onDestroy();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+
+        if (intent != null && Intent.ACTION_MAIN.equals(intent.getAction())
+                && intent.hasCategory(Intent.CATEGORY_HOME)) {
+            setContrastVisibility(View.GONE);
+            setRearrangeable(false);
+
+            if (controller != null) {
+                controller.hideAllSheets();
+            }
+
+            AppTransitionManager.getInstance().onReturnToHome(this);
+        }
     }
 
     @Override
     protected void onResume() {
         glance.update();
         updateWallpaperZoom(0f);
+
+        AppTransitionManager.getInstance().onReturnToHome(this);
 
         View root = getRoot();
         root.setVisibility(View.VISIBLE);

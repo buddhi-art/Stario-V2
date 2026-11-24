@@ -309,7 +309,7 @@ public class LeftSheetBehavior<V extends View> extends SheetBehavior<V> {
                     state = STATE_EXPANDED;
                 }
 
-                settleChildTo(releasedChild, state, left, releasedChild.getTop());
+                settleChildTo(releasedChild, state, left, releasedChild.getTop(), (int) xvel, (int) yvel);
             }
 
             @Override

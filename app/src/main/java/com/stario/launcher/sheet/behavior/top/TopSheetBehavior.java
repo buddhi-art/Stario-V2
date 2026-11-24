@@ -298,7 +298,7 @@ public class TopSheetBehavior<V extends View> extends SheetBehavior<V> {
                     targetState = STATE_EXPANDED;
                 }
 
-                settleChildTo(releasedChild, targetState, releasedChild.getLeft(), top);
+                settleChildTo(releasedChild, targetState, releasedChild.getLeft(), top, (int) xvel, (int) yvel);
             }
 
             @Override

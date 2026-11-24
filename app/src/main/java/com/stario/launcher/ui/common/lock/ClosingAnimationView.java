@@ -97,10 +97,8 @@ public class ClosingAnimationView extends ConstraintLayout {
     }
 
     public boolean reset() {
-        Window window = activity.getWindow();
-
-        if (window != null) {
-            window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        if (animator != null && animator.isRunning()) {
+            animator.cancel();
         }
 
         if (!closed) {
@@ -120,14 +118,12 @@ public class ClosingAnimationView extends ConstraintLayout {
         this.x = x;
         this.y = y;
 
-        Window window = activity.getWindow();
-
-        if (window != null) {
-            window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE);
+        if (animator != null && animator.isRunning()) {
+            animator.cancel();
         }
 
         animator = ValueAnimator.ofFloat(1f, 0f);
-        animator.setDuration(Animation.EXTENDED.getDuration());
+        animator.setDuration(Animation.SHORT.getDuration());
         animator.setInterpolator(new FastOutSlowInInterpolator());
 
         animator.addUpdateListener(animation -> {

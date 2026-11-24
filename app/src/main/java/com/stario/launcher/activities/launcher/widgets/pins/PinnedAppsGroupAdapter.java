@@ -32,14 +32,21 @@ import com.stario.launcher.ui.recyclers.async.InflationType;
 import java.util.function.Supplier;
 
 class PinnedAppsGroupAdapter extends AsyncRecyclerAdapter<PinnedAppsGroupAdapter.ViewHolder> {
-    private final int startingIndex;
-    private final Category category;
+    private int startingIndex;
+    private Category category;
 
     public PinnedAppsGroupAdapter(ThemedActivity activity, Category category, int startingIndex) {
         super(activity, InflationType.SYNCED);
 
         this.category = category;
         this.startingIndex = startingIndex;
+    }
+
+    @SuppressLint("NotifyDataSetChanged")
+    public void updateData(Category category, int startingIndex) {
+        this.category = category;
+        this.startingIndex = startingIndex;
+        notifyDataSetChanged();
     }
 
     public class ViewHolder extends AsyncViewHolder {

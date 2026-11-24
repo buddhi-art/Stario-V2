@@ -53,7 +53,7 @@ public class Stario extends Application {
                     @Override
                     public void onStart(@NonNull LifecycleOwner owner) {
                         if (!Measurements.wereTaken()) {
-                            throw new RuntimeException("Measurements were not taken.");
+                            Log.w("Stario", "Measurements were not taken yet.");
                         }
                     }
                 });

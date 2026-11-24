@@ -27,8 +27,10 @@ import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
 import android.graphics.Shader;
 import android.util.AttributeSet;
+import android.view.View;
 import android.view.animation.LinearInterpolator;
 
+import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.widget.AppCompatTextView;
 
@@ -72,30 +74,76 @@ public class PulsingTextView extends AppCompatTextView {
         gradientPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         gradientPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
 
-        animator = ValueAnimator.ofFloat(0f, 0f)
-                .setDuration(Animation.SUSTAINED.getDuration());
+        animator = ValueAnimator.ofFloat(0f, 2f);
+        animator.setDuration(Animation.SUSTAINED.getDuration());
         animator.setInterpolator(new LinearInterpolator());
         animator.setRepeatCount(ValueAnimator.INFINITE);
+        animator.addUpdateListener(animation -> {
+            if (pulsating && getVisibility() == VISIBLE && getWindowVisibility() == VISIBLE) {
+                offset = (float) animation.getAnimatedValue();
+                invalidate();
+            }
+        });
     }
 
     public void setPulsating(boolean pulsating) {
         this.pulsating = pulsating;
 
+        if (pulsating) {
+            updateAnimationState();
+        } else {
+            if (animator != null && animator.isRunning()) {
+                animator.cancel();
+            }
+        }
+
         invalidate();
+    }
+
+    private void updateAnimationState() {
+        if (animator == null) {
+            return;
+        }
+
+        if (pulsating && isAttachedToWindow() && getVisibility() == VISIBLE && getWindowVisibility() == VISIBLE) {
+            if (!animator.isRunning()) {
+                animator.start();
+            }
+        } else {
+            if (animator.isRunning()) {
+                animator.cancel();
+            }
+        }
     }
 
     @Override
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
 
-        animator.start();
+        updateAnimationState();
     }
 
     @Override
     protected void onDetachedFromWindow() {
-        animator.cancel();
+        if (animator != null) {
+            animator.cancel();
+        }
 
         super.onDetachedFromWindow();
+    }
+
+    @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+
+        updateAnimationState();
+    }
+
+    @Override
+    protected void onVisibilityChanged(@NonNull View changedView, int visibility) {
+        super.onVisibilityChanged(changedView, visibility);
+
+        updateAnimationState();
     }
 
     @Override
@@ -105,19 +153,14 @@ public class PulsingTextView extends AppCompatTextView {
         post(this::calculateGradients);
     }
 
-    @Override
-    public void invalidate() {
-        if (animator != null) {
-            offset = animator.getAnimatedFraction() * 2f;
+    private void calculateGradients() {
+        int width = getWidth();
+        if (width <= 0) {
+            return;
         }
 
-        super.invalidate();
-    }
-
-    private void calculateGradients() {
         List<Integer> colors = new ArrayList<>();
         int fadeLength = Measurements.dpToPx(FADE_LENGTH);
-        int width = getWidth();
 
         while (width > -fadeLength) {
             colors.add(Color.BLACK);
@@ -143,14 +186,8 @@ public class PulsingTextView extends AppCompatTextView {
 
     @Override
     protected void onDraw(Canvas canvas) {
-        if(pulsating) {
-            if (getVisibility() != VISIBLE) {
-                super.onDraw(canvas);
-
-                return;
-            }
-
-            if (evenColors != null) {
+        if (pulsating && getVisibility() == VISIBLE) {
+            if (evenColors != null && getWidth() > 0 && getHeight() > 0) {
                 initGradient();
 
                 int count = canvas.saveLayer(0.0f, 0.0f, (float) getWidth(), (float) getHeight(), null);
@@ -159,9 +196,9 @@ public class PulsingTextView extends AppCompatTextView {
                 canvas.drawRect(0, 0, getWidth(), getHeight(), gradientPaint);
 
                 canvas.restoreToCount(count);
+            } else {
+                super.onDraw(canvas);
             }
-
-            invalidate();
         } else {
             super.onDraw(canvas);
         }

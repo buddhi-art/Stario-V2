@@ -142,6 +142,7 @@ class PinnedAppsAdapter extends RecyclerApplicationAdapter {
 
     public class PinnedGroupViewHolder extends ApplicationViewHolder {
         private RecyclerView group;
+        private PinnedAppsGroupAdapter groupAdapter;
 
         public PinnedGroupViewHolder(int viewType) {
             super(viewType);
@@ -152,6 +153,12 @@ class PinnedAppsAdapter extends RecyclerApplicationAdapter {
             super.onInflated();
 
             group = itemView.findViewById(R.id.group);
+            if (group != null) {
+                group.setLayoutManager(new GridLayoutManager(activity, 2));
+                group.setHasFixedSize(true);
+                groupAdapter = new PinnedAppsGroupAdapter(activity, category, itemCount - 1);
+                group.setAdapter(groupAdapter);
+            }
         }
 
         @Override
@@ -208,9 +215,15 @@ class PinnedAppsAdapter extends RecyclerApplicationAdapter {
             viewHolder.setIcon(null);
 
             PinnedGroupViewHolder pinedViewHolder = (PinnedGroupViewHolder) viewHolder;
-            pinedViewHolder.group.setLayoutManager(new GridLayoutManager(activity, 2));
-            pinedViewHolder.group.setAdapter(new PinnedAppsGroupAdapter(activity,
-                    category, itemCount - 1));
+            if (pinedViewHolder.groupAdapter != null) {
+                pinedViewHolder.groupAdapter.updateData(category, itemCount - 1);
+            } else if (pinedViewHolder.group != null) {
+                pinedViewHolder.group.setLayoutManager(new GridLayoutManager(activity, 2));
+                pinedViewHolder.group.setHasFixedSize(true);
+                pinedViewHolder.groupAdapter = new PinnedAppsGroupAdapter(activity,
+                        category, itemCount - 1);
+                pinedViewHolder.group.setAdapter(pinedViewHolder.groupAdapter);
+            }
         }
     }
 

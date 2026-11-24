@@ -34,7 +34,7 @@ public class OverScrollRecyclerView extends RecyclerView implements OverScroll {
     private ArrayList<OverScrollContract> contracts;
     private OverScrollEffect<?> overScrollOwner;
     private boolean isLayoutPending;
-    private boolean touching;
+    private boolean isTouchActive;
     @OverScrollEffect.Edge
     private int pullEdges;
 
@@ -62,7 +62,7 @@ public class OverScrollRecyclerView extends RecyclerView implements OverScroll {
         this.onScrollListeners = new ArrayList<>();
         this.edgeEffects = new ArrayList<>();
         this.overScrollOwner = null;
-        this.touching = false;
+        this.isTouchActive = false;
         this.isLayoutPending = false;
         this.pullEdges = OverScrollEffect.PULL_EDGE_BOTTOM | OverScrollEffect.PULL_EDGE_TOP;
 
@@ -105,7 +105,7 @@ public class OverScrollRecyclerView extends RecyclerView implements OverScroll {
                 if (sizeChanged) {
                     isLayoutPending = false;
 
-                    if (touching) {
+                    if (!isTouchActive) {
                         super.stopNestedScroll();
 
                     }
@@ -118,7 +118,7 @@ public class OverScrollRecyclerView extends RecyclerView implements OverScroll {
     @SuppressLint("ClickableViewAccessibility")
     public boolean onTouchEvent(MotionEvent event) {
         int action = event.getAction();
-        touching = (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL);
+        isTouchActive = (action != MotionEvent.ACTION_UP && action != MotionEvent.ACTION_CANCEL);
 
         return super.onTouchEvent(event);
     }

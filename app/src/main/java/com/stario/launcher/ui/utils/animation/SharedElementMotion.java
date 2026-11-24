@@ -18,24 +18,24 @@
 package com.stario.launcher.ui.utils.animation;
 
 import android.graphics.Path;
-import androidx.transition.PathMotion;
 
 import androidx.annotation.NonNull;
+import androidx.transition.ArcMotion;
+import androidx.transition.PathMotion;
 
 public final class SharedElementMotion extends PathMotion {
+    private final ArcMotion arcMotion;
+
+    public SharedElementMotion() {
+        this.arcMotion = new ArcMotion();
+        this.arcMotion.setMinimumHorizontalAngle(15f);
+        this.arcMotion.setMinimumVerticalAngle(0f);
+        this.arcMotion.setMaximumAngle(70f);
+    }
 
     @NonNull
     @Override
     public Path getPath(float startX, float startY, float endX, float endY) {
-        Path path = new Path();
-        path.moveTo(startX, startY);
-
-        path.cubicTo(startX + endX * ((float) Math.random() * 0.5f),
-                startY + endY * ((float) Math.random() * 0.5f),
-                endX + startX * ((float) Math.random() * 0.5f),
-                endY + startY * ((float) Math.random() * 0.5f),
-                endX, endY);
-
-        return path;
+        return arcMotion.getPath(startX, startY, endX, endY);
     }
 }

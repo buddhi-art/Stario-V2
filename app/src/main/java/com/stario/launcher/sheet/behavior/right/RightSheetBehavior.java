@@ -317,7 +317,7 @@ public class RightSheetBehavior<V extends View> extends SheetBehavior<V> {
                     targetState = STATE_COLLAPSED;
                 }
 
-                settleChildTo(releasedChild, targetState, left, releasedChild.getTop());
+                settleChildTo(releasedChild, targetState, left, releasedChild.getTop(), (int) xvel, (int) yvel);
             }
 
             @Override

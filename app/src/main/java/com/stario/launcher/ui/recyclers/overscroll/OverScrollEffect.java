@@ -20,6 +20,7 @@ package com.stario.launcher.ui.recyclers.overscroll;
 import android.graphics.Canvas;
 import android.graphics.Rect;
 import android.view.MotionEvent;
+import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.widget.EdgeEffect;
@@ -49,10 +50,9 @@ public class OverScrollEffect<V extends View & OverScroll> extends EdgeEffect {
     private static final float VELOCITY_MULTIPLIER = 3f;
     private static final float VELOCITY_MULTIPLIER_FLING = 1.2f;
     private static final float SPRING_FACTOR_MULTIPLIER = 1000f;
-    private static final float SPRING_STIFFNESS = 300f;
+    private static final float SPRING_STIFFNESS = 350f;
     private static final float SPRING_DAMPING_RATIO = 1f;
-    private static final float SCALE_MULTIPLIER = 0.05f;
-    private static final float TRANSLATE_MULTIPLIER = 0.1f;
+    private static final float TRANSLATE_MULTIPLIER = 0.12f;
     private static final float MAX_TRANSLATION_DP = 100f;
 
     @IntDef(flag = true, value = {
@@ -72,6 +72,8 @@ public class OverScrollEffect<V extends View & OverScroll> extends EdgeEffect {
     private final Rect bounds;
     private final V view;
 
+    private VelocityTracker velocityTracker;
+    private float releaseVelocityY = 0f;
     private boolean receivedMoveEvent;
     private boolean isCanvasCaptured;
     private OverScrollState oldState;
@@ -158,17 +160,18 @@ public class OverScrollEffect<V extends View & OverScroll> extends EdgeEffect {
             int maxTranslation = Math.min((int) (canvas.getHeight() * TRANSLATE_MULTIPLIER),
                     Measurements.dpToPx(MAX_TRANSLATION_DP));
 
-            float factorValue = Math.min(1, factor.getValue());
-            float easedFactor = 1 - (float) Math.pow(1 - factorValue, 3f);
-            float translationY = easedFactor * maxTranslation;
-            float scaleY = 1 + (float) Math.pow(factorValue, 0.8) * SCALE_MULTIPLIER;
+            // Apple progressive rubber-band translation:
+            // f(x) = (x * d * c) / (d + c * |x|)
+            float factorValue = Math.min(1.5f, factor.getValue());
+            float rawOvershoot = factorValue * maxTranslation * 1.5f;
+            float c = 0.55f;
+            float translationY = (rawOvershoot * maxTranslation * c) /
+                    (maxTranslation + c * Math.abs(rawOvershoot));
 
             if (pivot == PIVOT_BOTTOM) {
                 canvas.translate(0, -translationY);
-                canvas.scale(1, scaleY, bounds.centerX(), bounds.height());
             } else if (pivot == PIVOT_TOP) {
                 canvas.translate(0, translationY);
-                canvas.scale(1, scaleY, bounds.centerX(), 0);
             } else {
                 isCanvasCaptured = false;
                 return false;
@@ -202,6 +205,12 @@ public class OverScrollEffect<V extends View & OverScroll> extends EdgeEffect {
         if (animation != null && animation.isRunning()) {
             animation.cancel();
         }
+
+        if (velocityTracker != null) {
+            velocityTracker.recycle();
+            velocityTracker = null;
+        }
+        releaseVelocityY = 0f;
 
         view.releaseOverScroll(this);
 
@@ -285,9 +294,23 @@ public class OverScrollEffect<V extends View & OverScroll> extends EdgeEffect {
             } else {
                 state = OverScrollState.SETTLING;
                 notifyStateChange(state);
-                animation.setStartVelocity(0)
+
+                // Preserve fling release velocity into SpringAnimation
+                float startVelocity = 0f;
+                if (releaseVelocityY != 0f) {
+                    if (pivot == PIVOT_TOP) {
+                        // Dragging down increased factor. Flinging back up (< 0) speeds recovery.
+                        startVelocity = (releaseVelocityY / maxFlingVelocity) * SPRING_FACTOR_MULTIPLIER * VELOCITY_MULTIPLIER;
+                    } else if (pivot == PIVOT_BOTTOM) {
+                        // Dragging up increased factor. Flinging back down (> 0) speeds recovery.
+                        startVelocity = (-releaseVelocityY / maxFlingVelocity) * SPRING_FACTOR_MULTIPLIER * VELOCITY_MULTIPLIER;
+                    }
+                }
+
+                animation.setStartVelocity(startVelocity)
                         .setStartValue(factor.getValue() * SPRING_FACTOR_MULTIPLIER)
                         .start();
+                releaseVelocityY = 0f;
             }
         }
     }
@@ -368,9 +391,15 @@ public class OverScrollEffect<V extends View & OverScroll> extends EdgeEffect {
     }
 
     void onTouchEvent(MotionEvent event) {
+        if (velocityTracker == null) {
+            velocityTracker = VelocityTracker.obtain();
+        }
+        velocityTracker.addMovement(event);
+
         switch (event.getAction()) {
             case MotionEvent.ACTION_DOWN:
                 initialTouchY = event.getRawY();
+                releaseVelocityY = 0f;
                 break;
 
             case MotionEvent.ACTION_MOVE:
@@ -401,6 +430,8 @@ public class OverScrollEffect<V extends View & OverScroll> extends EdgeEffect {
                 break;
 
             case MotionEvent.ACTION_UP:
+                velocityTracker.computeCurrentVelocity(1000, maxFlingVelocity);
+                releaseVelocityY = velocityTracker.getYVelocity();
                 receivedMoveEvent = false;
                 initialTouchY = -1;
 
@@ -408,6 +439,11 @@ public class OverScrollEffect<V extends View & OverScroll> extends EdgeEffect {
 
             case MotionEvent.ACTION_CANCEL:
                 view.releaseOverScroll(this);
+                if (velocityTracker != null) {
+                    velocityTracker.recycle();
+                    velocityTracker = null;
+                }
+                releaseVelocityY = 0f;
                 receivedMoveEvent = false;
                 initialTouchY = -1;
 

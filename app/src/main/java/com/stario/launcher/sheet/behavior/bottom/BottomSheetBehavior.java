@@ -284,13 +284,12 @@ public class BottomSheetBehavior<V extends View> extends SheetBehavior<V> {
                 int top;
                 @SheetBehavior.State int targetState;
 
-                if (yvel == 0.f ||
-                        Measurements.dpToPx(ViewConfiguration.getMinimumFlingVelocity() +
-                                (ViewConfiguration.getMaximumFlingVelocity() -
-                                        ViewConfiguration.getMinimumFlingVelocity()) / 10f) > Math.abs(yvel)) {
+                float minFling = ViewConfiguration.get(releasedChild.getContext()).getScaledMinimumFlingVelocity();
+                if (Math.abs(yvel) < minFling) {
                     int currentTop = releasedChild.getTop();
-
-                    if (currentTop < (expandedOffset + collapsedOffset) / 2) {
+                    // Apple momentum projection: project where release movement naturally lands
+                    float projectedTop = currentTop + (yvel / 1000f) * 499f;
+                    if (Math.abs(projectedTop - expandedOffset) < Math.abs(projectedTop - collapsedOffset)) {
                         top = expandedOffset;
                         targetState = STATE_EXPANDED;
                     } else {
@@ -305,7 +304,7 @@ public class BottomSheetBehavior<V extends View> extends SheetBehavior<V> {
                     targetState = STATE_EXPANDED;
                 }
 
-                settleChildTo(releasedChild, targetState, releasedChild.getLeft(), top);
+                settleChildTo(releasedChild, targetState, releasedChild.getLeft(), top, (int) xvel, (int) yvel);
             }
 
             @Override

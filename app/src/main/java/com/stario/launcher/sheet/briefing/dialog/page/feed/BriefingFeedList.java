@@ -148,7 +148,6 @@ public class BriefingFeedList {
         }
     }
 
-    @SuppressLint("ApplySharedPref")
     private void serialize() {
         ArrayList<String> serials = new ArrayList<>();
         for (Feed item : items) {
@@ -156,7 +155,7 @@ public class BriefingFeedList {
         }
 
         state.edit().putString(FEEDS_KEY,
-                new JSONArray(serials).toString()).commit();
+                new JSONArray(serials).toString()).apply();
     }
 
     public void addOnFeedUpdateListener(FeedListener listener) {

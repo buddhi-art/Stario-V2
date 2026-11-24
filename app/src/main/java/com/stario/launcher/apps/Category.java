@@ -46,7 +46,7 @@ public class Category {
 
     @Nullable
     public LauncherApplication get(int index) {
-        if (index < applications.size()) {
+        if (index >= 0 && index < applications.size()) {
             return applications.get(index);
         } else {
             return LauncherApplication.FALLBACK_APP;

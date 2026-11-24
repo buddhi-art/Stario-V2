@@ -25,6 +25,12 @@ import android.os.Build;
 
 import com.stario.launcher.utils.Utils;
 
+/**
+ * Legacy broadcast receiver watcher for Intent.ACTION_CLOSE_SYSTEM_DIALOGS.
+ * @deprecated Deprecated on Android 12+ (API 31+) as the system dialogs broadcast is blocked for
+ * 3rd-party launchers. Modern Home and gesture detection is handled via Activity.onNewIntent().
+ */
+@Deprecated
 public class HomeWatcher {
     private final IntentFilter filter;
     private final Context context;
@@ -44,18 +50,28 @@ public class HomeWatcher {
 
     public void startWatch() {
         if (receiver != null) {
-            if (Utils.isMinimumSDK(Build.VERSION_CODES.TIRAMISU)) {
-                context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
-            } else {
-                // noinspection UnspecifiedRegisterReceiverFlag
-                context.registerReceiver(receiver, filter);
+            // Android 12+ restricts ACTION_CLOSE_SYSTEM_DIALOGS; onNewIntent in Launcher handles home detection.
+            if (Utils.isMinimumSDK(Build.VERSION_CODES.S)) {
+                return;
+            }
+            try {
+                if (Utils.isMinimumSDK(Build.VERSION_CODES.TIRAMISU)) {
+                    context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED);
+                } else {
+                    // noinspection UnspecifiedRegisterReceiverFlag
+                    context.registerReceiver(receiver, filter);
+                }
+            } catch (Exception ignored) {
             }
         }
     }
 
     public void stopWatch() {
         if (receiver != null) {
-            context.unregisterReceiver(receiver);
+            try {
+                context.unregisterReceiver(receiver);
+            } catch (Exception ignored) {
+            }
         }
     }
 

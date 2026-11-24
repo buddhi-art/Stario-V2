@@ -181,7 +181,7 @@ public class StylizedClockView extends View implements SensorEventListener {
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
 
-        if (accelerometer != null) {
+        if (accelerometer != null && getWindowVisibility() == VISIBLE) {
             sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI);
         }
     }
@@ -190,7 +190,22 @@ public class StylizedClockView extends View implements SensorEventListener {
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
 
-        sensorManager.unregisterListener(this);
+        if (sensorManager != null) {
+            sensorManager.unregisterListener(this);
+        }
+    }
+
+    @Override
+    protected void onWindowVisibilityChanged(int visibility) {
+        super.onWindowVisibilityChanged(visibility);
+
+        if (sensorManager != null) {
+            if (visibility == VISIBLE && accelerometer != null) {
+                sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI);
+            } else {
+                sensorManager.unregisterListener(this);
+            }
+        }
     }
 
     /**
@@ -250,10 +265,13 @@ public class StylizedClockView extends View implements SensorEventListener {
             rawAngle = gravityAngle;
         }
 
-        gravityAngle += 0.08f *
+        float deltaAngle = 0.08f *
                 ((getDegreeStrengthBias(rawAngle, flatAmount) - gravityAngle + 540f) % 360f - 180f);
 
-        invalidate();
+        if (Math.abs(deltaAngle) >= 0.1f) {
+            gravityAngle += deltaAngle;
+            invalidate();
+        }
     }
 
     private float getDegreeStrengthBias(float angle, float factor) {
@@ -637,6 +655,11 @@ public class StylizedClockView extends View implements SensorEventListener {
             canvas.drawText("PM", pmTextX, pmTextY, amPmPaint);
         }
 
-        postInvalidateOnAnimation();
+        if (is24Hour && getVisibility() == VISIBLE && getWindowVisibility() == VISIBLE) {
+            postInvalidateOnAnimation();
+        } else if (getVisibility() == VISIBLE && getWindowVisibility() == VISIBLE) {
+            long now = System.currentTimeMillis();
+            postInvalidateDelayed(Math.max(50, 1000 - (now % 1000)));
+        }
     }
 }

@@ -66,8 +66,8 @@ public class SheetDragHelper {
      */
     public static final int STATE_SETTLING = 2;
 
-    private static final int BASE_SETTLE_DURATION = 256; // ms
-    private static final int MAX_SETTLE_DURATION = 600; // ms
+    private static final int BASE_SETTLE_DURATION = 200; // ms
+    private static final int MAX_SETTLE_DURATION = 400; // ms
 
     // Current drag state; idle, dragging or settling
     private int mDragState;
@@ -352,7 +352,8 @@ public class SheetDragHelper {
      * @return true if animation should continue through {@link #continueSettling(boolean)} calls
      */
     public boolean smoothSlideViewTo(@NonNull View child, int finalLeft, int finalTop) {
-        if (mVelocityTracker != null) {
+        if (mVelocityTracker != null && mActivePointerId != INVALID_POINTER) {
+            mVelocityTracker.computeCurrentVelocity(1000, mMaxVelocity);
             return smoothSlideViewTo(child, finalLeft, finalTop,
                     (int) mVelocityTracker.getXVelocity(mActivePointerId),
                     (int) mVelocityTracker.getYVelocity(mActivePointerId));
@@ -452,7 +453,8 @@ public class SheetDragHelper {
         int duration;
         velocity = Math.abs(velocity);
         if (velocity != 0) {
-            duration = 4 * Math.round(1000 * Math.abs(distance / velocity));
+            duration = Math.round(1000f * Math.abs(distance / velocity));
+            duration = Math.max(duration, 150);
         } else {
             final float range = (float) Math.abs(delta) / motionRange;
             duration = (int) ((range + 1) * BASE_SETTLE_DURATION);

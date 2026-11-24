@@ -20,13 +20,17 @@ package com.stario.launcher.apps;
 import android.content.pm.ApplicationInfo;
 import android.content.pm.LauncherActivityInfo;
 import android.content.pm.LauncherApps;
+import android.graphics.Rect;
 import android.graphics.drawable.Drawable;
+import android.os.Bundle;
 import android.os.UserHandle;
+import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import com.stario.launcher.themes.ThemedActivity;
+import com.stario.launcher.ui.utils.animation.AppTransitionManager;
 import com.stario.launcher.utils.Utils;
 
 import java.util.UUID;
@@ -56,12 +60,20 @@ public class LauncherApplication implements Comparable<LauncherApplication> {
     }
 
     public void launch(ThemedActivity activity) {
+        launch(activity, null);
+    }
+
+    public void launch(ThemedActivity activity, @Nullable View sourceView) {
         LauncherActivityInfo info = Utils.getMainActivity(activity, getInfo().packageName, handle);
 
         if (info != null) {
+            Rect[] sourceBoundsHolder = new Rect[1];
+            Bundle options = AppTransitionManager.getInstance()
+                    .prepareAppLaunch(activity, info.getComponentName(), sourceView, sourceBoundsHolder);
+
             activity.getSystemService(LauncherApps.class)
                     .startMainActivity(info.getComponentName(),
-                            handle, null, null);
+                            handle, sourceBoundsHolder[0], options);
         }
     }
 

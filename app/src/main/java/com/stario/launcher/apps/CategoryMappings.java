@@ -116,6 +116,12 @@ public class CategoryMappings {
             if (aIndex != null && bIndex != null) {
                 return Integer.compare(aIndex, bIndex);
             }
+            if (aIndex != null) {
+                return -1;
+            }
+            if (bIndex != null) {
+                return 1;
+            }
 
             return a.compareTo(b);
         }
@@ -166,6 +172,12 @@ public class CategoryMappings {
 
             if (aIndex != null && bIndex != null) {
                 return Integer.compare(aIndex, bIndex);
+            }
+            if (aIndex != null) {
+                return -1;
+            }
+            if (bIndex != null) {
+                return 1;
             }
 
             return a.identifier.compareTo(b.identifier);

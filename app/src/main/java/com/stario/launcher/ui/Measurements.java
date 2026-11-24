@@ -19,10 +19,13 @@ package com.stario.launcher.ui;
 
 import android.app.Activity;
 import android.content.ContentResolver;
+import android.content.Context;
+import android.content.ContextWrapper;
 import android.database.ContentObserver;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
+import android.os.Looper;
 import android.provider.Settings;
 import android.util.DisplayMetrics;
 import android.view.View;
@@ -71,11 +74,18 @@ public class Measurements {
     }
 
     private static void measure(View root) {
-        Activity activity = (Activity) root.getContext();
+        Activity activity = null;
+        Context context = root.getContext();
+        while (context instanceof ContextWrapper) {
+            if (context instanceof Activity) {
+                activity = (Activity) context;
+                break;
+            }
+            context = ((ContextWrapper) context).getBaseContext();
+        }
 
-        registerContentObservers(activity);
-        DisplayMetrics displayMetrics = activity.getResources()
-                .getDisplayMetrics();
+        registerContentObservers(root.getContext());
+        DisplayMetrics displayMetrics = root.getResources().getDisplayMetrics();
 
         dp = displayMetrics.density;
         dpi = displayMetrics.densityDpi;
@@ -86,6 +96,7 @@ public class Measurements {
 
         defaultPadding = dpToPx(20);
 
+        final Activity finalActivity = activity;
         root.setOnApplyWindowInsetsListener((v, insets) -> {
             if (Utils.isMinimumSDK(Build.VERSION_CODES.R)) {
                 SYS_UI_HEIGHT.updateObject(insets
@@ -93,7 +104,7 @@ public class Measurements {
 
                 boolean isKeyboardVisible = insets.isVisible(WindowInsets.Type.ime());
 
-                if (isKeyboardVisible && ((activity.getWindow().getAttributes().softInputMode &
+                if (isKeyboardVisible && finalActivity != null && ((finalActivity.getWindow().getAttributes().softInputMode &
                         WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
                         != WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)) {
 
@@ -121,9 +132,10 @@ public class Measurements {
         measured = true;
     }
 
-    private static void registerContentObservers(Activity activity) {
+    private static void registerContentObservers(Context context) {
         if (contentObserver == null) {
-            ContentResolver resolver = activity.getContentResolver();
+            Context appContext = context.getApplicationContext();
+            ContentResolver resolver = appContext.getContentResolver();
             WINDOW_ANIMATION_SCALE.updateObject(Settings.Global.getFloat(
                     resolver, Settings.Global.WINDOW_ANIMATION_SCALE,
                     1.0f
@@ -137,7 +149,7 @@ public class Measurements {
                     1.0f
             ));
 
-            contentObserver = new ContentObserver(new Handler()) {
+            contentObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
                 @Override
                 public void onChange(boolean selfChange) {
                     onChange(selfChange, null);
@@ -172,6 +184,16 @@ public class Measurements {
                     Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE),
                     true, contentObserver
             );
+        }
+    }
+
+    public static void unregisterContentObservers(Context context) {
+        if (contentObserver != null && context != null) {
+            try {
+                context.getApplicationContext().getContentResolver().unregisterContentObserver(contentObserver);
+            } catch (Exception ignored) {
+            }
+            contentObserver = null;
         }
     }
 
@@ -235,11 +257,23 @@ public class Measurements {
         }
     }
 
+    public static void removeStatusBarListener(ObservableObject.OnSet<Integer> listener) {
+        if (listener != null) {
+            SYS_UI_HEIGHT.removeListener(listener);
+        }
+    }
+
     public static void addNavListener(ObservableObject.OnSet<Integer> listener) {
         if (listener != null) {
             NAV_HEIGHT.addListener(listener);
 
             listener.onSet(NAV_HEIGHT.getObject());
+        }
+    }
+
+    public static void removeNavListener(ObservableObject.OnSet<Integer> listener) {
+        if (listener != null) {
+            NAV_HEIGHT.removeListener(listener);
         }
     }
 
