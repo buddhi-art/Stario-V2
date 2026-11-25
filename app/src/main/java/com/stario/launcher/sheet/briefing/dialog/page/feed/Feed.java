@@ -65,10 +65,15 @@ public class Feed implements Serializable {
         if (rss.isEmpty()) {
             return null;
         } else {
-            return "{" +
-                    "\"" + FEED_TITLE + "\":\"" + title + "\"," +
-                    "\"" + FEED_RSS + "\":\"" + rss + "\"" +
-                    "}";
+            try {
+                JSONObject jsonObject = new JSONObject();
+                jsonObject.put(FEED_TITLE, title);
+                jsonObject.put(FEED_RSS, rss);
+                return jsonObject.toString();
+            } catch (Exception exception) {
+                Log.e(TAG, "serialize: Error serializing feed.", exception);
+                return null;
+            }
         }
     }
 

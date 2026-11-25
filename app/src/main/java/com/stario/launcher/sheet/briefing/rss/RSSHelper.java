@@ -28,32 +28,50 @@ import org.jetbrains.annotations.NotNull;
 
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 public class RSSHelper {
     private static final String TAG = "RSSHelper";
-    private static RssParser reader;
+    private static final long PARSE_TIMEOUT_SECONDS = 15;
+    private static volatile RssParser reader;
 
     private RSSHelper() {
     }
 
-    public static @NotNull CompletableFuture<@NotNull RssChannel> futureParse(String url) {
-        if (reader == null) {
-            reader = new RssParserBuilder().build();
+    private static RssParser getReader() {
+        RssParser instance = reader;
+        if (instance == null) {
+            synchronized (RSSHelper.class) {
+                instance = reader;
+                if (instance == null) {
+                    instance = new RssParserBuilder().build();
+                    reader = instance;
+                }
+            }
         }
+        return instance;
+    }
 
-        return RSSHelperKt.parseFeed(reader, url);
+    public static @NotNull CompletableFuture<@NotNull RssChannel> futureParse(String url) {
+        return RSSHelperKt.parseFeed(getReader(), url);
     }
 
     public static List<RssItem> parse(String url) {
-        if (reader == null) {
-            reader = new RssParserBuilder().build();
+        if (url == null || url.isBlank()) {
+            return null;
         }
 
+        CompletableFuture<RssChannel> future = RSSHelperKt.parseFeed(getReader(), url);
         try {
-            RssChannel channel = RSSHelperKt.parseFeed(reader, url).get();
+            RssChannel channel = future.get(PARSE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             return channel.getItems();
+        } catch (InterruptedException exception) {
+            future.cancel(true);
+            Thread.currentThread().interrupt();
+            Log.e(TAG, "parse: ", exception);
         } catch (Exception exception) {
+            future.cancel(true);
             Log.e(TAG, "parse: ", exception);
         }
 

@@ -19,6 +19,7 @@ package com.stario.launcher.activities.launcher.widgets.glance.extensions.media;
 
 import android.annotation.SuppressLint;
 import android.app.ActivityOptions;
+import android.content.ActivityNotFoundException;
 import android.content.BroadcastReceiver;
 import android.content.ComponentName;
 import android.content.Context;
@@ -86,6 +87,7 @@ public class Media extends GlanceDialogExtension {
     public static final String PREFERENCE_ENTRY = "com.stario.Media.MEDIA";
     private static final String TAG = "com.stario.launcher.media";
     private static final long SEEK_TIME = 5000;
+    private static final long SKIP_UPDATE_RESET_DELAY_MS = 1500;
     private static final float MIN_BITMAP_SIZE = 256;
     private static final Integer PLAYING = 1;
     private static final Integer PAUSED = 0;
@@ -95,6 +97,7 @@ public class Media extends GlanceDialogExtension {
 
     private final MediaSessionManager.OnActiveSessionsChangedListener sessionsChangedListener;
     private final Map<MediaController, MediaController.Callback> controllerCallbacks;
+    private final Runnable resetSkipUpdateRunnable = () -> skipUpdate = false;
     private final Runnable sliderUpdater = new Runnable() {
         @Override
         public void run() {
@@ -107,8 +110,11 @@ public class Media extends GlanceDialogExtension {
         }
     };
 
+    private DefaultLifecycleObserver activityLifecycleObserver;
+    private BroadcastReceiver notificationReceiver;
     private MediaSessionManager mediaSessionManager;
     private boolean sessionsListenerRegistered;
+    private boolean receiverRegistered;
     private ConstraintLayout coverParent;
     private SliderComposeView slider;
     private MediaController session;
@@ -197,7 +203,8 @@ public class Media extends GlanceDialogExtension {
 
         playPause.setTag(PAUSED);
 
-        BroadcastReceiver receiver = new BroadcastReceiver() {
+        unregisterNotificationReceiver();
+        notificationReceiver = new BroadcastReceiver() {
             @Override
             public void onReceive(Context context, Intent intent) {
                 update();
@@ -205,31 +212,31 @@ public class Media extends GlanceDialogExtension {
         };
 
         if (Utils.isMinimumSDK(Build.VERSION_CODES.TIRAMISU)) {
-            activity.registerReceiver(receiver,
+            activity.registerReceiver(notificationReceiver,
                     new IntentFilter(NotificationService.UPDATE_NOTIFICATIONS), Context.RECEIVER_NOT_EXPORTED);
         } else {
-            activity.registerReceiver(receiver,
+            activity.registerReceiver(notificationReceiver,
                     new IntentFilter(NotificationService.UPDATE_NOTIFICATIONS));
         }
+        receiverRegistered = true;
 
         Lifecycle lifecycle = activity.getLifecycle();
-        lifecycle.addObserver(new DefaultLifecycleObserver() {
+        if (activityLifecycleObserver != null) {
+            lifecycle.removeObserver(activityLifecycleObserver);
+        }
+        activityLifecycleObserver = new DefaultLifecycleObserver() {
             @Override
             public void onDestroy(@NonNull LifecycleOwner owner) {
-                try {
-                    activity.unregisterReceiver(receiver);
-
-                    disable();
-                } catch (Exception exception) {
-                    Log.e(TAG, "Receiver not registered");
-                }
-
+                unregisterNotificationReceiver();
+                disable();
                 lifecycle.removeObserver(this);
+                activityLifecycleObserver = null;
             }
-        });
+        };
+        lifecycle.addObserver(activityLifecycleObserver);
 
         root.setOnClickListener(v -> {
-            if (session != null) {
+            if (activity != null && session != null && session.getPackageName() != null) {
                 PackageManager packageManager = activity.getPackageManager();
 
                 Intent intent = packageManager.getLaunchIntentForPackage(session.getPackageName());
@@ -237,9 +244,13 @@ public class Media extends GlanceDialogExtension {
                 if (intent != null) {
                     Vibrations.getInstance().vibrate();
 
-                    activity.startActivity(intent,
-                            ActivityOptions.makeScaleUpAnimation(root, 0, 0,
-                                    root.getWidth(), root.getHeight()).toBundle());
+                    try {
+                        activity.startActivity(intent,
+                                ActivityOptions.makeScaleUpAnimation(root, 0, 0,
+                                        root.getWidth(), root.getHeight()).toBundle());
+                    } catch (ActivityNotFoundException exception) {
+                        Log.e(TAG, "Unable to launch media app", exception);
+                    }
                 }
             }
         });
@@ -247,6 +258,18 @@ public class Media extends GlanceDialogExtension {
         update();
 
         return root;
+    }
+
+    private void unregisterNotificationReceiver() {
+        if (activity != null && notificationReceiver != null && receiverRegistered) {
+            try {
+                activity.unregisterReceiver(notificationReceiver);
+            } catch (Exception exception) {
+                Log.e(TAG, "Receiver not registered");
+            }
+            receiverRegistered = false;
+        }
+        notificationReceiver = null;
     }
 
     @Override
@@ -266,7 +289,7 @@ public class Media extends GlanceDialogExtension {
     }
 
     private void attemptSessionListenerRegistration() {
-        if (mediaSessionManager == null) {
+        if (mediaSessionManager == null || activity == null || sessionsListenerRegistered) {
             return;
         }
 
@@ -281,10 +304,37 @@ public class Media extends GlanceDialogExtension {
     }
 
     @Override
+    public void onDestroyView() {
+        unregisterNotificationReceiver();
+        if (song != null) {
+            song.animate().cancel();
+        }
+        if (artist != null) {
+            artist.animate().cancel();
+        }
+        if (slider != null) {
+            slider.setListener(null);
+        }
+
+        super.onDestroyView();
+    }
+
+    @Override
     public void onDestroy() {
         stopSliderUpdates();
+        clearSkipUpdate();
+        unregisterNotificationReceiver();
+
+        if (activity != null && activityLifecycleObserver != null) {
+            activity.getLifecycle().removeObserver(activityLifecycleObserver);
+            activityLifecycleObserver = null;
+        }
+
         if (mediaSessionManager != null && sessionsListenerRegistered) {
-            mediaSessionManager.removeOnActiveSessionsChangedListener(sessionsChangedListener);
+            try {
+                mediaSessionManager.removeOnActiveSessionsChangedListener(sessionsChangedListener);
+            } catch (Exception ignored) {
+            }
             sessionsListenerRegistered = false;
         }
 
@@ -301,6 +351,7 @@ public class Media extends GlanceDialogExtension {
     @SuppressLint("ClickableViewAccessibility")
     public void update() {
         if (activity == null ||
+                mediaSessionManager == null ||
                 !NotificationManagerCompat
                         .getEnabledListenerPackages(activity)
                         .contains(BuildConfig.APPLICATION_ID) ||
@@ -377,7 +428,8 @@ public class Media extends GlanceDialogExtension {
 
         for (MediaController controller : controllers) {
             PlaybackState state = controller.getPlaybackState();
-            AudioAttributes attrs = controller.getPlaybackInfo().getAudioAttributes();
+            MediaController.PlaybackInfo playbackInfo = controller.getPlaybackInfo();
+            AudioAttributes attrs = playbackInfo != null ? playbackInfo.getAudioAttributes() : null;
 
             if (attrs != null &&
                     attrs.getUsage() == AudioAttributes.USAGE_MEDIA &&
@@ -390,7 +442,8 @@ public class Media extends GlanceDialogExtension {
 
         if (activeSessionCandidate == null && session != null) {
             for (MediaController controller : controllers) {
-                AudioAttributes attrs = controller.getPlaybackInfo().getAudioAttributes();
+                MediaController.PlaybackInfo playbackInfo = controller.getPlaybackInfo();
+                AudioAttributes attrs = playbackInfo != null ? playbackInfo.getAudioAttributes() : null;
 
                 if (attrs != null &&
                         attrs.getUsage() == AudioAttributes.USAGE_MEDIA &&
@@ -406,7 +459,8 @@ public class Media extends GlanceDialogExtension {
         // fallback to the first controller
         if (activeSessionCandidate == null) {
             for (MediaController controller : controllers) {
-                AudioAttributes attrs = controller.getPlaybackInfo().getAudioAttributes();
+                MediaController.PlaybackInfo playbackInfo = controller.getPlaybackInfo();
+                AudioAttributes attrs = playbackInfo != null ? playbackInfo.getAudioAttributes() : null;
 
                 if (attrs != null &&
                         attrs.getUsage() == AudioAttributes.USAGE_MEDIA &&
@@ -419,7 +473,8 @@ public class Media extends GlanceDialogExtension {
 
         if (session != activeSessionCandidate) {
             session = activeSessionCandidate;
-            handler.removeCallbacksAndMessages(null);
+            clearSkipUpdate();
+            stopSliderUpdates();
         }
 
         updateSession();
@@ -488,7 +543,7 @@ public class Media extends GlanceDialogExtension {
                 Vibrations.getInstance().vibrate();
 
                 session.getTransportControls().skipToPrevious();
-                skipUpdate = true;
+                markSkipUpdate();
 
                 view.startAnimation(AnimationUtils.loadAnimation(activity, R.anim.bounce_left));
             }
@@ -499,7 +554,7 @@ public class Media extends GlanceDialogExtension {
                 Vibrations.getInstance().vibrate();
 
                 session.getTransportControls().skipToNext();
-                skipUpdate = true;
+                markSkipUpdate();
 
                 view.startAnimation(AnimationUtils.loadAnimation(activity, R.anim.bounce_right));
             }
@@ -522,7 +577,7 @@ public class Media extends GlanceDialogExtension {
                     session.getTransportControls().skipToNext();
                 }
 
-                skipUpdate = true;
+                markSkipUpdate();
 
                 view.startAnimation(AnimationUtils.loadAnimation(activity, R.anim.rotate_small));
             }
@@ -540,13 +595,21 @@ public class Media extends GlanceDialogExtension {
             lastSong = title;
             String finalTitle = title;
 
+            song.animate().cancel();
             song.animate().alpha(0)
                     .setDuration(Animation.MEDIUM.getDuration())
                     .withEndAction(() -> {
+                        if (song == null) {
+                            return;
+                        }
                         song.setText(finalTitle);
-                        song.post(() -> song.animate()
-                                .alpha(1)
-                                .setDuration(Animation.MEDIUM.getDuration()));
+                        song.post(() -> {
+                            if (song != null) {
+                                song.animate()
+                                        .alpha(1)
+                                        .setDuration(Animation.MEDIUM.getDuration());
+                            }
+                        });
                     });
         }
 
@@ -562,24 +625,31 @@ public class Media extends GlanceDialogExtension {
             lastArtist = artistStr;
             String finalArtist = artistStr;
 
+            artist.animate().cancel();
             artist.animate().alpha(0)
                     .setDuration(Animation.MEDIUM.getDuration())
                     .withEndAction(() -> {
+                        if (artist == null) {
+                            return;
+                        }
                         artist.setText(finalArtist);
-                        artist.post(() -> artist.animate()
-                                .alpha(0.85f)
-                                .setDuration(Animation.MEDIUM.getDuration())
-                        );
+                        artist.post(() -> {
+                            if (artist != null) {
+                                artist.animate()
+                                        .alpha(0.85f)
+                                        .setDuration(Animation.MEDIUM.getDuration());
+                            }
+                        });
                     });
         }
 
-        handler.removeCallbacksAndMessages(null);
+        stopSliderUpdates();
         updateSlider(metadata);
 
         slider.setListener(new SliderComposeView.OnProgressChanged() {
             @Override
             public void changing() {
-                skipUpdate = true;
+                markSkipUpdate();
             }
 
             @Override
@@ -589,6 +659,9 @@ public class Media extends GlanceDialogExtension {
                             metadata.getLong(MediaMetadata.METADATA_KEY_DURATION));
 
                     session.getTransportControls().seekTo(position);
+                    markSkipUpdate();
+                } else {
+                    clearSkipUpdate();
                 }
             }
         });
@@ -609,19 +682,11 @@ public class Media extends GlanceDialogExtension {
         }
 
         if (!result) {
-            Bitmap coverBmp = metadata.getBitmap(MediaMetadata.METADATA_KEY_ART);
-
-            if (coverBmp == null ||
-                    coverBmp.getWidth() < MIN_BITMAP_SIZE ||
-                    coverBmp.getHeight() < MIN_BITMAP_SIZE) {
-                coverBmp = metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
-            }
-
-            if (coverBmp == null ||
-                    coverBmp.getWidth() < MIN_BITMAP_SIZE ||
-                    coverBmp.getHeight() < MIN_BITMAP_SIZE) {
-                coverBmp = metadata.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON);
-            }
+            Bitmap coverBmp = pickBestCover(
+                    metadata.getBitmap(MediaMetadata.METADATA_KEY_ART),
+                    metadata.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART),
+                    metadata.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON)
+            );
 
             updateCover(coverBmp);
         }
@@ -629,17 +694,69 @@ public class Media extends GlanceDialogExtension {
         updatePlaybackState();
     }
 
+    private void markSkipUpdate() {
+        skipUpdate = true;
+        handler.removeCallbacks(resetSkipUpdateRunnable);
+        handler.postDelayed(resetSkipUpdateRunnable, SKIP_UPDATE_RESET_DELAY_MS);
+    }
+
+    private void clearSkipUpdate() {
+        skipUpdate = false;
+        handler.removeCallbacks(resetSkipUpdateRunnable);
+    }
+
+    @Nullable
+    private static Bitmap pickBestCover(Bitmap... candidates) {
+        Bitmap fallback = null;
+        for (Bitmap candidate : candidates) {
+            if (candidate == null) {
+                continue;
+            }
+            if (fallback == null) {
+                fallback = candidate;
+            }
+            if (candidate.getWidth() >= MIN_BITMAP_SIZE &&
+                    candidate.getHeight() >= MIN_BITMAP_SIZE) {
+                return candidate;
+            }
+        }
+        return fallback;
+    }
+
     private void reset() {
         stopSliderUpdates();
-        playPause.setOnClickListener(null);
-        rewind.setOnClickListener(null);
-        skip.setOnClickListener(null);
-        forward.setOnClickListener(null);
+        clearSkipUpdate();
+        if (playPause != null) {
+            playPause.setOnClickListener(null);
+        }
+        if (rewind != null) {
+            rewind.setOnClickListener(null);
+        }
+        if (skip != null) {
+            skip.setOnClickListener(null);
+        }
+        if (forward != null) {
+            forward.setOnClickListener(null);
+        }
+        if (slider != null) {
+            slider.setListener(null);
+        }
 
-        song.setText(null);
-        artist.setText(null);
+        if (song != null) {
+            song.animate().cancel();
+            song.setText(null);
+        }
+        if (artist != null) {
+            artist.animate().cancel();
+            artist.setText(null);
+        }
 
-        cover.setImageDrawable(null);
+        if (cover != null) {
+            if (activity != null && !activity.isDestroyed()) {
+                Glide.with(activity).clear(cover);
+            }
+            cover.setImageDrawable(null);
+        }
 
         lastArtist = "";
         lastSong = "";
@@ -647,20 +764,32 @@ public class Media extends GlanceDialogExtension {
     }
 
     public boolean updateCover(String stringUri) {
-        if (stringUri != null) {
+        if (stringUri != null && activity != null) {
             try {
-                InputStream inputStream;
                 Uri uri = Uri.parse(stringUri);
+                String scheme = uri != null ? uri.getScheme() : null;
+                InputStream inputStream;
 
-                if (uri != null && "content".equals(uri.getScheme())) {
+                if ("content".equals(scheme) || "file".equals(scheme)) {
                     inputStream = activity.getContentResolver().openInputStream(uri);
-                } else {
+                } else if (scheme == null) {
                     inputStream = new FileInputStream(stringUri);
+                } else {
+                    return false;
                 }
 
-                updateCover(BitmapFactory.decodeStream(inputStream));
+                if (inputStream == null) {
+                    return false;
+                }
 
-                return true;
+                try (InputStream stream = inputStream) {
+                    Bitmap decoded = BitmapFactory.decodeStream(stream);
+                    if (decoded != null) {
+                        updateCover(decoded);
+                        return true;
+                    }
+                    return false;
+                }
             } catch (Exception exception) {
                 return false;
             }
@@ -685,13 +814,16 @@ public class Media extends GlanceDialogExtension {
                 config = Bitmap.Config.ARGB_8888;
             }
 
-            bitmap = bitmap.copy(config, false);
+            Bitmap copied = bitmap.copy(config, false);
+            if (copied != null) {
+                bitmap = copied;
+            }
 
             DrawableCrossFadeFactory factory =
                     new DrawableCrossFadeFactory.Builder()
                             .setCrossFadeEnabled(true).build();
 
-            if (!activity.isDestroyed()) {
+            if (activity != null && !activity.isDestroyed() && cover != null) {
                 Glide.with(activity)
                         .load(bitmap)
                         .apply(RequestOptions.bitmapTransform(
@@ -707,6 +839,12 @@ public class Media extends GlanceDialogExtension {
             lastCover = bitmap;
         } else {
             lastCover = null;
+            if (cover != null) {
+                if (activity != null && !activity.isDestroyed()) {
+                    Glide.with(activity).clear(cover);
+                }
+                cover.setImageDrawable(null);
+            }
         }
     }
 
@@ -813,6 +951,7 @@ public class Media extends GlanceDialogExtension {
 
     public void disable() {
         stopSliderUpdates();
+        clearSkipUpdate();
         session = null;
         preview.setEnabled(isEnabled());
 
@@ -822,13 +961,14 @@ public class Media extends GlanceDialogExtension {
                 public void onProgressFraction(float fraction) {
                     if (fraction == 0) {
                         reset();
+                        removeTransitionListener(this);
                     }
-
-                    removeTransitionListener(this);
                 }
             });
 
             urgentHide();
+        } else {
+            reset();
         }
     }
 
@@ -848,7 +988,7 @@ public class Media extends GlanceDialogExtension {
 
         @Override
         public void onPlaybackStateChanged(@Nullable PlaybackState state) {
-            skipUpdate = false;
+            clearSkipUpdate();
 
             if (state == null) {
                 return;
@@ -870,6 +1010,7 @@ public class Media extends GlanceDialogExtension {
         public void onMetadataChanged(@Nullable MediaMetadata metadata) {
             if (session != null && session.getSessionToken()
                     .equals(controller.getSessionToken())) {
+                clearSkipUpdate();
                 updateSession();
             }
 

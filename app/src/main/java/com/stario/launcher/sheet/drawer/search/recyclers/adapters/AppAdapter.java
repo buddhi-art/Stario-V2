@@ -96,7 +96,7 @@ public class AppAdapter extends RecyclerApplicationAdapter
 
             for (ProfileApplicationManager manager : profileManagers) {
                 for (int index = 0; index < (showHiddenItems ?
-                        manager.getSize() : manager.getActualSize()); index++) {
+                        manager.getActualSize() : manager.getSize()); index++) {
                     LauncherApplication application = showHiddenItems ?
                             manager.get(index, true) : manager.get(index);
 
@@ -121,7 +121,7 @@ public class AppAdapter extends RecyclerApplicationAdapter
         }
 
         applications = filteredList;
-        currentQuery = query;
+        currentQuery = query != null ? query : "";
 
         Runnable runnable = () -> {
             notifyDataSetChanged();
@@ -169,16 +169,20 @@ public class AppAdapter extends RecyclerApplicationAdapter
     public void onBind(@NonNull ApplicationViewHolder viewHolder, int index) {
         super.onBind(viewHolder, index);
 
-        String label = getApplication(index).getLabel();
-        int substringStart = label.toLowerCase().indexOf(currentQuery);
+        LauncherApplication application = getApplication(index);
+        if (application != null && currentQuery != null && !currentQuery.isEmpty()) {
+            String label = application.getLabel();
+            String queryLower = currentQuery.toLowerCase();
+            int substringStart = label.toLowerCase().indexOf(queryLower);
 
-        if (substringStart >= 0) {
-            SpannableStringBuilder builder = new SpannableStringBuilder(label);
-            builder.setSpan(new StyleSpan(android.graphics.Typeface.BOLD),
-                    substringStart, substringStart + currentQuery.length(),
-                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+            if (substringStart >= 0 && substringStart + queryLower.length() <= label.length()) {
+                SpannableStringBuilder builder = new SpannableStringBuilder(label);
+                builder.setSpan(new StyleSpan(android.graphics.Typeface.BOLD),
+                        substringStart, substringStart + queryLower.length(),
+                        Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
 
-            viewHolder.setLabel(builder);
+                viewHolder.setLabel(builder);
+            }
         }
     }
 

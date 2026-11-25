@@ -21,7 +21,6 @@ import android.app.Activity;
 import android.location.Address;
 import android.location.Geocoder;
 import android.util.Log;
-import android.webkit.WebSettings;
 
 import com.stario.launcher.utils.Utils;
 
@@ -30,6 +29,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.net.URLEncoder;
@@ -44,13 +44,10 @@ public class GeocoderFallback {
     private static final int REQUEST_TIMEOUT = 5_000;
 
     private final Geocoder geocoder;
-    private final Activity activity;
 
     public GeocoderFallback(Activity activity) {
-        this.activity = activity;
-
-        if (Geocoder.isPresent()) {
-            this.geocoder = new Geocoder(activity);
+        if (activity != null && Geocoder.isPresent()) {
+            this.geocoder = new Geocoder(activity.getApplicationContext());
         } else {
             this.geocoder = null;
         }
@@ -82,21 +79,23 @@ public class GeocoderFallback {
             connection.setReadTimeout(REQUEST_TIMEOUT);
             connection.setConnectTimeout(REQUEST_TIMEOUT);
             connection.setRequestMethod("GET");
-            connection.addRequestProperty("User-Agent", WebSettings.getDefaultUserAgent(activity));
+            connection.addRequestProperty("User-Agent", Utils.APP_USER_AGENT);
             connection.addRequestProperty("Content-type", "application/json");
 
             int responseCode = connection.getResponseCode();
             if (responseCode == HttpURLConnection.HTTP_OK) {
-                JSONObject jsonObject = new JSONObject(Utils.readStream(connection.getInputStream()));
-                JSONArray features = jsonObject.optJSONArray("features");
+                try (InputStream inputStream = connection.getInputStream()) {
+                    JSONObject jsonObject = new JSONObject(Utils.readStream(inputStream));
+                    JSONArray features = jsonObject.optJSONArray("features");
 
-                if (features != null) {
-                    for (int index = 0; index < features.length(); index++) {
-                        JSONObject feature = features.getJSONObject(index);
-                        Address address = parsePhotonFeature(feature);
+                    if (features != null) {
+                        for (int index = 0; index < features.length(); index++) {
+                            JSONObject feature = features.getJSONObject(index);
+                            Address address = parsePhotonFeature(feature);
 
-                        if (address != null) {
-                            addresses.add(address);
+                            if (address != null) {
+                                addresses.add(address);
+                            }
                         }
                     }
                 }
@@ -138,18 +137,20 @@ public class GeocoderFallback {
             connection.setReadTimeout(REQUEST_TIMEOUT);
             connection.setConnectTimeout(REQUEST_TIMEOUT);
             connection.setRequestMethod("GET");
-            connection.addRequestProperty("User-Agent", WebSettings.getDefaultUserAgent(activity));
+            connection.addRequestProperty("User-Agent", Utils.APP_USER_AGENT);
             connection.addRequestProperty("Content-type", "application/json");
 
             int responseCode = connection.getResponseCode();
             if (responseCode == HttpURLConnection.HTTP_OK) {
-                JSONObject jsonObject = new JSONObject(Utils.readStream(connection.getInputStream()));
-                JSONArray features = jsonObject.optJSONArray("features");
+                try (InputStream inputStream = connection.getInputStream()) {
+                    JSONObject jsonObject = new JSONObject(Utils.readStream(inputStream));
+                    JSONArray features = jsonObject.optJSONArray("features");
 
-                if (features != null && features.length() > 0) {
-                    JSONObject firstFeature = features.getJSONObject(0);
+                    if (features != null && features.length() > 0) {
+                        JSONObject firstFeature = features.getJSONObject(0);
 
-                    return parsePhotonFeature(firstFeature);
+                        return parsePhotonFeature(firstFeature);
+                    }
                 }
             } else {
                 Log.w(TAG, "getFromLocation: Server returned non-OK status: " + responseCode);

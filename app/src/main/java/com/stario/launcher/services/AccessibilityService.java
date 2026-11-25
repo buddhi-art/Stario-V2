@@ -24,7 +24,7 @@ public class AccessibilityService extends android.accessibilityservice.Accessibi
 
     @Override
     public void onAccessibilityEvent(AccessibilityEvent event) {
-        if (event.getAction() == LOCK) {
+        if (event != null && event.getAction() == LOCK) {
             performGlobalAction(GLOBAL_ACTION_LOCK_SCREEN);
         }
     }

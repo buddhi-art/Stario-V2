@@ -72,6 +72,7 @@ public class BriefingConfigurator extends ActionDialog {
 
     private volatile Future<?> currentSearchTask;
     private volatile Feed validatedFeed;
+    private volatile long searchGeneration;
 
     private Runnable debounceRunnable;
     private ViewGroup contentView;
@@ -99,8 +100,11 @@ public class BriefingConfigurator extends ActionDialog {
             @Override
             public void onTextChanged(@NonNull CharSequence sequence,
                                       int start, int before, int count) {
+                long generation = ++searchGeneration;
+
                 if (debounceRunnable != null) {
                     UiUtils.removeUICallback(debounceRunnable);
+                    debounceRunnable = null;
                 }
 
                 if (currentSearchTask != null && !currentSearchTask.isDone()) {
@@ -140,9 +144,13 @@ public class BriefingConfigurator extends ActionDialog {
 
                 String finalValidUrl = validUrl;
                 debounceRunnable = () -> {
+                    if (generation != searchGeneration || !isShowing()) {
+                        return;
+                    }
                     showStatus(R.string.searching, true);
                     currentSearchTask = Utils.submitTask(
                             new FeedDiscoveryTask(activity.getApplicationContext(),
+                                    generation,
                                     new String[]{
                                             finalValidUrl,
                                             finalValidUrl.replaceAll("/$", "") + ".rss"
@@ -177,18 +185,17 @@ public class BriefingConfigurator extends ActionDialog {
         contentView.findViewById(R.id.paste).setOnClickListener((v) -> {
             ClipboardManager clipboard = (ClipboardManager) activity.getSystemService(Context.CLIPBOARD_SERVICE);
 
-            if (clipboard.hasPrimaryClip()) {
+            if (clipboard != null && clipboard.hasPrimaryClip()) {
                 ClipData clip = clipboard.getPrimaryClip();
 
-                if (clip != null) {
-                    if (clip.getDescription().hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN)) {
-                        String text = clip.getItemAt(0)
-                                .coerceToText(activity).toString();
+                if (clip != null && clip.getItemCount() > 0 &&
+                        clip.getDescription().hasMimeType(ClipDescription.MIMETYPE_TEXT_PLAIN)) {
+                    CharSequence coerced = clip.getItemAt(0).coerceToText(activity);
+                    String text = coerced != null ? coerced.toString() : "";
 
-                        if (!text.isEmpty()) {
-                            query.setText(text);
-                            query.setSelection(text.length());
-                        }
+                    if (!text.isEmpty()) {
+                        query.setText(text);
+                        query.setSelection(text.length());
                     }
                 }
             }
@@ -204,6 +211,22 @@ public class BriefingConfigurator extends ActionDialog {
         }
 
         super.show();
+    }
+
+    @Override
+    public void dismiss() {
+        searchGeneration++;
+
+        if (debounceRunnable != null) {
+            UiUtils.removeUICallback(debounceRunnable);
+            debounceRunnable = null;
+        }
+        if (currentSearchTask != null && !currentSearchTask.isDone()) {
+            currentSearchTask.cancel(true);
+            currentSearchTask = null;
+        }
+
+        super.dismiss();
     }
 
     private boolean isValidUrl(String url) {
@@ -240,16 +263,18 @@ public class BriefingConfigurator extends ActionDialog {
 
     private class FeedDiscoveryTask implements Runnable {
         private final Stario context;
+        private final long generation;
         private final String[] urls;
 
-        private FeedDiscoveryTask(Stario context, String[] urls) {
+        private FeedDiscoveryTask(Stario context, long generation, String[] urls) {
             this.context = context;
+            this.generation = generation;
             this.urls = urls;
         }
 
         @Override
         public void run() {
-            if (Thread.currentThread().isInterrupted()) {
+            if (Thread.currentThread().isInterrupted() || generation != searchGeneration) {
                 return;
             }
 
@@ -258,31 +283,39 @@ public class BriefingConfigurator extends ActionDialog {
                     Feed feed = attemptParse(url);
 
                     // after a network task, check for interruption
-                    if (Thread.currentThread().isInterrupted()) {
+                    if (Thread.currentThread().isInterrupted() || generation != searchGeneration) {
                         return;
                     }
 
                     if (feed != null) {
-                        contentView.post(() -> showPreview(feed));
+                        contentView.post(() -> {
+                            if (generation == searchGeneration && isShowing()) {
+                                showPreview(feed);
+                            }
+                        });
 
                         return;
                     }
 
                     String discoveredFeedUrl = discoverFeedUrl(url);
 
-                    if (Thread.currentThread().isInterrupted()) {
+                    if (Thread.currentThread().isInterrupted() || generation != searchGeneration) {
                         return;
                     }
 
                     if (discoveredFeedUrl != null) {
                         Feed discoveredFeed = attemptParse(discoveredFeedUrl);
 
-                        if (Thread.currentThread().isInterrupted()) {
+                        if (Thread.currentThread().isInterrupted() || generation != searchGeneration) {
                             return;
                         }
 
                         if (discoveredFeed != null) {
-                            contentView.post(() -> showPreview(discoveredFeed));
+                            contentView.post(() -> {
+                                if (generation == searchGeneration && isShowing()) {
+                                    showPreview(discoveredFeed);
+                                }
+                            });
 
                             return;
                         }
@@ -292,7 +325,11 @@ public class BriefingConfigurator extends ActionDialog {
                 }
             }
 
-            contentView.post(() -> showStatus(R.string.invalid_rss, false));
+            contentView.post(() -> {
+                if (generation == searchGeneration && isShowing()) {
+                    showStatus(R.string.invalid_rss, false);
+                }
+            });
         }
 
         private Feed attemptParse(String url) {
@@ -308,7 +345,9 @@ public class BriefingConfigurator extends ActionDialog {
 
                 return new Feed(title, url);
             } catch (InterruptedException | TimeoutException exception) {
-                streamFuture.cancel(true);
+                if (streamFuture != null) {
+                    streamFuture.cancel(true);
+                }
 
                 if (exception instanceof InterruptedException) {
                     Thread.currentThread().interrupt();

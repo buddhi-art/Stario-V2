@@ -66,6 +66,7 @@ public class BriefingAdapter extends FragmentPagerAdapter {
     @Override
     public Object instantiateItem(@NonNull ViewGroup container, int position) {
         FeedPage fragment = (FeedPage) super.instantiateItem(container, position);
+        fragment.setPosition(position);
         registeredFragments.put(position, new WeakReference<>(fragment));
 
         return fragment;
@@ -73,9 +74,14 @@ public class BriefingAdapter extends FragmentPagerAdapter {
 
     @Override
     public long getItemId(int position) {
-        Feed feed = list.get(position);
+        if (position >= 0 && position < list.size()) {
+            Feed feed = list.get(position);
+            if (feed != null) {
+                return feed.getRSSLink().hashCode();
+            }
+        }
 
-        return feed != null ? feed.getRSSLink().hashCode() : position;
+        return position;
     }
 
     @Override
@@ -88,7 +94,13 @@ public class BriefingAdapter extends FragmentPagerAdapter {
     @Nullable
     @Override
     public CharSequence getPageTitle(int position) {
-        return list.get(position).getTitle();
+        if (position >= 0 && position < list.size()) {
+            Feed feed = list.get(position);
+            if (feed != null) {
+                return feed.getTitle();
+            }
+        }
+        return null;
     }
 
     public FeedPage getRegisteredFragment(int position) {

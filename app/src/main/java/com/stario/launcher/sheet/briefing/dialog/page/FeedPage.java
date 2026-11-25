@@ -49,6 +49,7 @@ import com.stario.launcher.ui.utils.LayoutSizeObserver;
 import com.stario.launcher.ui.utils.UiUtils;
 import com.stario.launcher.ui.utils.animation.Animation;
 import com.stario.launcher.utils.Utils;
+import com.stario.launcher.utils.objects.ObservableObject;
 
 import java.util.List;
 import java.util.concurrent.Future;
@@ -58,6 +59,9 @@ public class FeedPage extends Fragment {
 
     private static final float UPDATE_SCALE = 0.9f;
 
+    private ObservableObject.OnSet<Integer> statusBarListener;
+    private ObservableObject.OnSet<Integer> navListener;
+    private View.OnLayoutChangeListener headerLayoutListener;
     private CustomSwipeRefreshLayout swipeRefreshLayout;
     private ScrollControlStaggeredGridLayoutManager manager;
     private OverScrollRecyclerView recyclerView;
@@ -75,6 +79,10 @@ public class FeedPage extends Fragment {
     }
 
     public FeedPage(int position) {
+        this.position = position;
+    }
+
+    public void setPosition(int position) {
         this.position = position;
     }
 
@@ -124,17 +132,22 @@ public class FeedPage extends Fragment {
         }
 
         invalidateLayoutPadding();
-        Measurements.addNavListener(value ->
-                recyclerView.setPadding(recyclerView.getPaddingLeft(), recyclerView.getPaddingTop(),
-                        recyclerView.getPaddingRight(), value));
-        title.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop,
-                                         oldRight, oldBottom) -> invalidateLayoutPadding());
-        tabs.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop,
-                                        oldRight, oldBottom) -> invalidateLayoutPadding());
+        headerLayoutListener = (v, left, top, right, bottom, oldLeft, oldTop,
+                                oldRight, oldBottom) -> invalidateLayoutPadding();
+        if (title != null) {
+            title.addOnLayoutChangeListener(headerLayoutListener);
+        }
+        if (tabs != null) {
+            tabs.addOnLayoutChangeListener(headerLayoutListener);
+        }
 
-        Measurements.addStatusBarListener(object ->
+        statusBarListener = object -> {
+            if (recyclerView != null) {
                 recyclerView.setPadding(recyclerView.getPaddingLeft(), recyclerView.getPaddingTop(),
-                        recyclerView.getPaddingRight(), Measurements.getNavHeight()));
+                        recyclerView.getPaddingRight(), Measurements.getNavHeight());
+            }
+        };
+        Measurements.addStatusBarListener(statusBarListener);
 
         if (adapter == null) {
             adapter = new FeedPageAdapter(activity.getApplicationContext());
@@ -172,14 +185,63 @@ public class FeedPage extends Fragment {
                         UiUtils.post(this::update)
                 );
 
-        Measurements.addNavListener(bottomInset ->
+        navListener = bottomInset -> {
+            if (recyclerView != null) {
                 recyclerView.setPadding(recyclerView.getPaddingLeft(), recyclerView.getPaddingTop(),
-                        recyclerView.getPaddingRight(), bottomInset));
+                        recyclerView.getPaddingRight(), bottomInset);
+            }
+        };
+        Measurements.addNavListener(navListener);
 
         return root;
     }
 
+    @Override
+    public void onDestroyView() {
+        if (runningTask != null && !runningTask.isDone()) {
+            runningTask.cancel(true);
+            runningTask = null;
+        }
+
+        if (statusBarListener != null) {
+            Measurements.removeStatusBarListener(statusBarListener);
+            statusBarListener = null;
+        }
+        if (navListener != null) {
+            Measurements.removeNavListener(navListener);
+            navListener = null;
+        }
+        if (headerLayoutListener != null) {
+            if (title != null) {
+                title.removeOnLayoutChangeListener(headerLayoutListener);
+            }
+            if (tabs != null) {
+                tabs.removeOnLayoutChangeListener(headerLayoutListener);
+            }
+            headerLayoutListener = null;
+        }
+
+        if (recyclerView != null) {
+            recyclerView.animate().cancel();
+            recyclerView.setAdapter(null);
+            recyclerView = null;
+        }
+
+        swipeRefreshLayout = null;
+        exceptionView = null;
+        fetchingView = null;
+        title = null;
+        tabs = null;
+
+        super.onDestroyView();
+    }
+
     public void invalidateLayoutPadding() {
+        if (recyclerView == null || title == null || tabs == null ||
+                exceptionView == null || fetchingView == null || swipeRefreshLayout == null) {
+            return;
+        }
+
         int titleHeight = title.getMeasuredHeight();
         int tabsHeight = tabs.getMeasuredHeight();
 
@@ -200,14 +262,19 @@ public class FeedPage extends Fragment {
     }
 
     public void update() {
+        if (!isAdded() || getView() == null || activity == null) {
+            return;
+        }
+
         if (runningTask != null && !runningTask.isDone()) {
             swipeRefreshLayout.setRefreshing(false);
 
             return;
         }
 
+        BriefingFeedList feedList = BriefingFeedList.from(activity);
         if (adapter == null || position < 0 ||
-                position >= BriefingFeedList.from(activity).size()) {
+                position >= feedList.size()) {
             showErrorState();
 
             return;
@@ -223,6 +290,8 @@ public class FeedPage extends Fragment {
             return;
         }
 
+        final String rssLink = feedList.get(position).getRSSLink();
+
         manager.setScrollEnabled(false);
         exceptionView.setVisibility(View.GONE);
         recyclerView.clearAnimation();
@@ -237,11 +306,15 @@ public class FeedPage extends Fragment {
         }
 
         runningTask = Utils.submitTask(() -> {
-            List<RssItem> items = RSSHelper
-                    .parse(BriefingFeedList.getInstance()
-                            .get(position).getRSSLink());
+            List<RssItem> items = RSSHelper.parse(rssLink);
 
             UiUtils.post(() -> {
+                runningTask = null;
+
+                if (!isAdded() || getView() == null) {
+                    return;
+                }
+
                 if (items != null) {
                     adapter.update(items);
 
@@ -285,12 +358,17 @@ public class FeedPage extends Fragment {
         swipeRefreshLayout.setVisibility(View.INVISIBLE);
         recyclerView.setAlpha(0f);
 
+        manager.setScrollEnabled(true);
         swipeRefreshLayout.setRefreshing(false);
     }
 
     public void reset() {
-        swipeRefreshLayout.setRefreshing(false);
-        recyclerView.scrollBy(0, -Integer.MAX_VALUE);
+        if (swipeRefreshLayout != null) {
+            swipeRefreshLayout.setRefreshing(false);
+        }
+        if (recyclerView != null) {
+            recyclerView.scrollBy(0, -Integer.MAX_VALUE);
+        }
     }
 
     public RecyclerView getRecycler() {

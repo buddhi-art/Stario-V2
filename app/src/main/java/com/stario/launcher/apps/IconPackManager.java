@@ -25,6 +25,7 @@ import android.content.SharedPreferences;
 import android.content.pm.LauncherApps;
 import android.content.pm.PackageManager;
 import android.content.res.Resources;
+import android.content.res.XmlResourceParser;
 import android.graphics.drawable.Drawable;
 import android.util.Log;
 import android.util.Pair;
@@ -163,15 +164,15 @@ public final class IconPackManager {
         updateIcon(packageName);
     }
 
-    public int getCount() {
+    public synchronized int getCount() {
         return iconPacks.size();
     }
 
-    public IconPack getPack(int index) {
+    public synchronized IconPack getPack(int index) {
         return iconPacks.get(index);
     }
 
-    public IconPack getPack(String packageName) {
+    public synchronized IconPack getPack(String packageName) {
         for (int index = 0; index < iconPacks.size(); index++) {
             if (iconPacks.get(index)
                     .application.info
@@ -326,7 +327,12 @@ public final class IconPackManager {
                 result.add(new Pair<>(null, new Pair<>(null,
                         ImageUtils.getIcon(launcherApps, application.info.packageName))));
 
-                for (IconPack pack : iconPacks) {
+                List<IconPack> snapshot;
+                synchronized (IconPackManager.this) {
+                    snapshot = new ArrayList<>(iconPacks);
+                }
+
+                for (IconPack pack : snapshot) {
                     List<String> drawableNames = pack.getDrawableNameList(application.info.packageName).get();
 
                     if (drawableNames != null && !drawableNames.isEmpty()) {
@@ -358,7 +364,7 @@ public final class IconPackManager {
         private final List<Runnable> completionListeners;
         private CompletableFuture<Boolean> loadTask;
         private Resources resources;
-        private boolean cached;
+        private volatile boolean cached;
 
         private IconPack(LauncherApplication application) {
             this.application = application;
@@ -378,18 +384,19 @@ public final class IconPackManager {
                 return;
             }
 
-            if (loadTask != null && !loadTask.isDone() &&
-                    completionListener != null) {
+            if (completionListener != null) {
                 completionListeners.add(completionListener);
+            }
+
+            if (loadTask != null && !loadTask.isDone()) {
                 return;
             }
 
             loadTask = Utils.submitTask(() -> {
+                XmlResourceParser xmlParser = null;
+                InputStream appFilterStream = null;
+                boolean success = false;
                 try {
-                    if (completionListener != null) {
-                        completionListeners.add(completionListener);
-                    }
-
                     XmlPullParser parser = null;
 
                     resources = packageManager.getResourcesForApplication(application.info.packageName);
@@ -397,10 +404,11 @@ public final class IconPackManager {
                             application.info.packageName);
 
                     if (appFilterId > 0) {
-                        parser = resources.getXml(appFilterId);
+                        xmlParser = resources.getXml(appFilterId);
+                        parser = xmlParser;
                     } else {
                         try {
-                            InputStream appFilterStream = resources.getAssets()
+                            appFilterStream = resources.getAssets()
                                     .open("appfilter.xml");
 
                             XmlPullParserFactory factory = XmlPullParserFactory.newInstance();
@@ -439,13 +447,15 @@ public final class IconPackManager {
                                     }
 
                                     if (componentName != null && componentName.contains("/")) {
-                                        if (drawableName != null) {
-                                            saveDrawable(componentName, drawableName);
-                                        }
+                                        synchronized (IconPack.this) {
+                                            if (drawableName != null) {
+                                                saveDrawable(componentName, drawableName);
+                                            }
 
-                                        if (prefix != null) {
-                                            for (int day = 1; day <= 31; day++) {
-                                                saveDrawable(componentName, prefix + day);
+                                            if (prefix != null) {
+                                                for (int day = 1; day <= 31; day++) {
+                                                    saveDrawable(componentName, prefix + day);
+                                                }
                                             }
                                         }
                                     }
@@ -455,11 +465,7 @@ public final class IconPackManager {
                         }
                     }
 
-                    for (int index = 0; index < completionListeners.size(); index++) {
-                        completionListeners.get(index).run();
-                    }
-
-                    completionListeners.clear();
+                    success = true;
                     return true;
                 } catch (PackageManager.NameNotFoundException exception) {
                     Log.d(TAG, "Cannot load icon pack");
@@ -467,12 +473,31 @@ public final class IconPackManager {
                     Log.d(TAG, "Cannot parse icon pack appfilter.xml");
                 } catch (IOException exception) {
                     Log.e(TAG, "", exception);
+                } finally {
+                    if (xmlParser != null) {
+                        xmlParser.close();
+                    }
+                    if (appFilterStream != null) {
+                        try {
+                            appFilterStream.close();
+                        } catch (IOException ignored) {
+                        }
+                    }
+
+                    List<Runnable> listenersToRun;
+                    synchronized (IconPack.this) {
+                        cached = success;
+                        listenersToRun = new ArrayList<>(completionListeners);
+                        completionListeners.clear();
+                    }
+
+                    for (Runnable listener : listenersToRun) {
+                        listener.run();
+                    }
                 }
 
                 return false;
             });
-
-            loadTask.thenAccept(result -> cached = result);
         }
 
         private void saveDrawable(String componentName, String drawableName) {
@@ -521,6 +546,9 @@ public final class IconPackManager {
         }
 
         private Drawable getDrawable(String drawableName) {
+            if (resources == null) {
+                return null;
+            }
             int id = resources.getIdentifier(drawableName,
                     "drawable", application.info.packageName);
 
@@ -544,7 +572,10 @@ public final class IconPackManager {
                         ComponentName component = launchIntent.getComponent();
 
                         if (component != null) {
-                            List<String> drawableNames = exactComponentDrawable.get(component.getPackageName() + '/' + component.getClassName());
+                            List<String> drawableNames;
+                            synchronized (IconPack.this) {
+                                drawableNames = exactComponentDrawable.get(component.getPackageName() + '/' + component.getClassName());
+                            }
 
                             if (drawableNames != null && !drawableNames.isEmpty()) {
                                 drawableName = drawableNames.get(0);
@@ -554,6 +585,7 @@ public final class IconPackManager {
 
                     if (drawableName != null) {
                         future.complete(IconPack.this.getDrawable(drawableName));
+                        return;
                     }
                 }
 
@@ -574,7 +606,13 @@ public final class IconPackManager {
                     ComponentName component = launchIntent.getComponent();
 
                     if (component != null) {
-                        future.complete(packageNameDrawables.get(component.getPackageName()));
+                        List<String> names;
+                        synchronized (IconPack.this) {
+                            List<String> stored = packageNameDrawables.get(component.getPackageName());
+                            names = stored != null ? new ArrayList<>(stored) : null;
+                        }
+                        future.complete(names);
+                        return;
                     }
                 }
 
@@ -598,10 +636,16 @@ public final class IconPackManager {
 
             UiUtils.post(() -> {
                 if (cached) {
-                    future.complete(exactComponentDrawable.size());
+                    synchronized (IconPack.this) {
+                        future.complete(exactComponentDrawable.size());
+                    }
                 } else {
                     Utils.submitTask(() ->
-                            load(() -> future.complete(exactComponentDrawable.size())));
+                            load(() -> {
+                                synchronized (IconPack.this) {
+                                    future.complete(exactComponentDrawable.size());
+                                }
+                            }));
                 }
             });
 
@@ -619,8 +663,9 @@ public final class IconPackManager {
             return application.hashCode();
         }
 
-        public void invalidate() {
+        public synchronized void invalidate() {
             exactComponentDrawable.clear();
+            packageNameDrawables.clear();
             cached = false;
 
             load(null);

@@ -59,7 +59,8 @@ public final class ProfileApplicationManager {
     private final LauncherApps.Callback callback;
     public final UserHandle handle;
 
-    private boolean loaded;
+    private final Object readyLock = new Object();
+    private volatile boolean loaded;
 
     ProfileApplicationManager(Stario stario, UserHandle handle) {
         this.visibleApplicationList = Collections.synchronizedList(new ArrayList<>());
@@ -188,50 +189,62 @@ public final class ProfileApplicationManager {
 
     private void loadApplications(Stario stario) {
         LauncherApps launcherApps = stario.getSystemService(LauncherApps.class);
-        List<LauncherActivityInfo> activityInfoList =
-                launcherApps.getActivityList(null, handle);
+        if (launcherApps != null) {
+            List<LauncherActivityInfo> activityInfoList =
+                    launcherApps.getActivityList(null, handle);
 
-        List<ApplicationInfo> iconPackApps = new ArrayList<>();
-        List<ApplicationInfo> otherApps = new ArrayList<>();
+            List<ApplicationInfo> iconPackApps = new ArrayList<>();
+            List<ApplicationInfo> otherApps = new ArrayList<>();
 
-        for (LauncherActivityInfo activityInfo : activityInfoList) {
-            ApplicationInfo applicationInfo = activityInfo.getApplicationInfo();
-            if (applicationInfo == null ||
-                    BuildConfig.APPLICATION_ID.equals(applicationInfo.packageName)) {
-                continue;
+            for (LauncherActivityInfo activityInfo : activityInfoList) {
+                ApplicationInfo applicationInfo = activityInfo.getApplicationInfo();
+                if (applicationInfo == null ||
+                        BuildConfig.APPLICATION_ID.equals(applicationInfo.packageName)) {
+                    continue;
+                }
+
+                if (iconPacks.checkPackValidity(applicationInfo.packageName)) {
+                    iconPackApps.add(applicationInfo);
+                } else {
+                    otherApps.add(applicationInfo);
+                }
             }
 
-            if (iconPacks.checkPackValidity(applicationInfo.packageName)) {
-                iconPackApps.add(applicationInfo);
-            } else {
-                otherApps.add(applicationInfo);
+            for (ApplicationInfo appInfo : iconPackApps) {
+                if (!applicationMap.containsKey(appInfo.packageName)) {
+                    addApplication(createApplication(appInfo));
+                }
+            }
+
+            List<LauncherApplication> snapshot;
+            synchronized (this) {
+                snapshot = new ArrayList<>(applicationList);
+            }
+            for (LauncherApplication application : snapshot) {
+                iconPacks.updateIcon(application.info.packageName);
+            }
+
+            for (ApplicationInfo appInfo : otherApps) {
+                if (!applicationMap.containsKey(appInfo.packageName)) {
+                    addApplication(createApplication(appInfo));
+                }
             }
         }
 
-        for (ApplicationInfo appInfo : iconPackApps) {
-            if (!applicationMap.containsKey(appInfo.packageName)) {
-                addApplication(createApplication(appInfo));
-            }
-        }
-
-        for (LauncherApplication application : applicationList) {
-            iconPacks.updateIcon(application.info.packageName);
-        }
-
-        for (ApplicationInfo appInfo : otherApps) {
-            if (!applicationMap.containsKey(appInfo.packageName)) {
-                addApplication(createApplication(appInfo));
-            }
-        }
-
-        loaded = true;
-        UiUtils.post(() -> {
-            for (OnLoadReadyListener listener : readyListeners) {
-                listener.onReady(this);
-            }
-
+        List<OnLoadReadyListener> listenersToNotify;
+        synchronized (readyLock) {
+            loaded = true;
+            listenersToNotify = new ArrayList<>(readyListeners);
             readyListeners.clear();
-        });
+        }
+
+        if (!listenersToNotify.isEmpty()) {
+            UiUtils.post(() -> {
+                for (OnLoadReadyListener listener : listenersToNotify) {
+                    listener.onReady(this);
+                }
+            });
+        }
     }
 
     public boolean isReady() {
@@ -239,12 +252,20 @@ public final class ProfileApplicationManager {
     }
 
     public void addOnReadyListener(OnLoadReadyListener listener) {
-        if (listener != null) {
-            if (loaded) {
-                listener.onReady(this);
-            } else {
+        if (listener == null) {
+            return;
+        }
+
+        boolean alreadyLoaded;
+        synchronized (readyLock) {
+            alreadyLoaded = loaded;
+            if (!alreadyLoaded) {
                 readyListeners.add(listener);
             }
+        }
+
+        if (alreadyLoaded) {
+            listener.onReady(this);
         }
     }
 
@@ -256,12 +277,20 @@ public final class ProfileApplicationManager {
     }
 
     void update() {
-        for (int index = 0; index < applicationList.size(); index++) {
-            updateApplication(applicationList.get(index));
+        List<LauncherApplication> snapshot;
+        synchronized (this) {
+            snapshot = new ArrayList<>(applicationList);
+        }
+        for (LauncherApplication application : snapshot) {
+            updateApplication(application);
         }
     }
 
     public void updateLabel(LauncherApplication application, String label) {
+        if (application == null) {
+            return;
+        }
+
         String oldLabel = application.label;
 
         if (label != null) {
@@ -273,6 +302,15 @@ public final class ProfileApplicationManager {
         }
 
         if (!oldLabel.equals(application.label)) {
+            synchronized (this) {
+                if (applicationList.remove(application)) {
+                    addApplicationToList(application, applicationList);
+                }
+                if (visibleApplicationList.remove(application)) {
+                    addApplicationToList(application, visibleApplicationList);
+                }
+            }
+
             applicationLabels.edit()
                     .putString(application.info.packageName, label)
                     .apply();
@@ -318,7 +356,7 @@ public final class ProfileApplicationManager {
      * @return {@link LauncherApplication} at index
      */
     @Nullable
-    public LauncherApplication get(int index) {
+    public synchronized LauncherApplication get(int index) {
         if (index >= 0 && index < visibleApplicationList.size()) {
             return visibleApplicationList.get(index);
         } else {
@@ -334,7 +372,7 @@ public final class ProfileApplicationManager {
      * @return {@link LauncherApplication} at index
      */
     @Nullable
-    public LauncherApplication get(int index, boolean hidden) {
+    public synchronized LauncherApplication get(int index, boolean hidden) {
         if (hidden) {
             if (index >= 0 && index < applicationList.size()) {
                 return applicationList.get(index);
@@ -357,11 +395,11 @@ public final class ProfileApplicationManager {
         return applicationMap.getOrDefault(packageName, LauncherApplication.FALLBACK_APP);
     }
 
-    public int getActualSize() {
+    public synchronized int getActualSize() {
         return applicationList.size();
     }
 
-    public int getSize() {
+    public synchronized int getSize() {
         return visibleApplicationList.size();
     }
 
@@ -391,7 +429,7 @@ public final class ProfileApplicationManager {
         int right = list.size() - 1;
 
         while (left <= right) {
-            int middle = (left + right) / 2;
+            int middle = (left + right) >>> 1;
 
             LauncherApplication application = list.get(middle);
             int compareValue = application.label
@@ -401,13 +439,22 @@ public final class ProfileApplicationManager {
                 left = middle + 1;
             } else if (compareValue > 0) {
                 right = middle - 1;
-            } else if (!application.info.packageName
-                    .equals(applicationToAdd.info.packageName)) {
+            } else {
+                for (int i = middle; i < list.size() &&
+                        list.get(i).label.compareToIgnoreCase(applicationToAdd.label) == 0; i++) {
+                    if (list.get(i).info.packageName.equals(applicationToAdd.info.packageName)) {
+                        return;
+                    }
+                }
+                for (int i = middle - 1; i >= 0 &&
+                        list.get(i).label.compareToIgnoreCase(applicationToAdd.label) == 0; i--) {
+                    if (list.get(i).info.packageName.equals(applicationToAdd.info.packageName)) {
+                        return;
+                    }
+                }
                 list.add(middle, applicationToAdd);
 
                 return;
-            } else {
-                return; // same package found
             }
         }
 
@@ -513,7 +560,7 @@ public final class ProfileApplicationManager {
     /**
      * @return Index of application in the hidden list
      **/
-    public int indexOf(LauncherApplication application) {
+    public synchronized int indexOf(LauncherApplication application) {
         return applicationList.indexOf(application);
     }
 

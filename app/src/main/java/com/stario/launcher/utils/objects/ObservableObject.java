@@ -20,6 +20,7 @@ package com.stario.launcher.utils.objects;
 import androidx.annotation.NonNull;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public class ObservableObject<A> {
@@ -35,8 +36,7 @@ public class ObservableObject<A> {
     }
 
     public void updateObject(A object) {
-        if (!((object != null && object.equals(observable.object)) ||
-                object == observable.object)) {
+        if (!Objects.equals(object, observable.object)) {
             observable.object = object;
 
             for (ObservableObject.OnSet<A> listener : observable.listeners) {
@@ -72,7 +72,7 @@ public class ObservableObject<A> {
     }
 
     public static class ClosedObservableObject<B> {
-        private B object;
+        private volatile B object;
         private final List<OnSet<B>> listeners;
 
         public ClosedObservableObject(B object) {
@@ -82,11 +82,15 @@ public class ObservableObject<A> {
         }
 
         public void addListener(@NonNull OnSet<B> listener) {
-            listeners.add(listener);
+            if (listener != null) {
+                listeners.add(listener);
+            }
         }
 
         public void removeListener(@NonNull OnSet<B> listener) {
-            listeners.remove(listener);
+            if (listener != null) {
+                listeners.remove(listener);
+            }
         }
 
         public B getObject() {

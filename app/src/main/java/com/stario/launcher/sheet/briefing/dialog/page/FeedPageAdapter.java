@@ -17,6 +17,7 @@
 
 package com.stario.launcher.sheet.briefing.dialog.page;
 
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.graphics.drawable.Drawable;
 import android.net.Uri;
@@ -146,18 +147,20 @@ class FeedPageAdapter extends RecyclerView.Adapter<FeedPageAdapter.ViewHolder> {
             RssItem item = items.get(index);
             Vibrations.getInstance().vibrate();
 
-            Intent intent = null;
-            if (item.getLink() != null) {
-                intent = new Intent(new Intent(Intent.ACTION_VIEW,
-                        Uri.parse(item.getLink())));
-            } else if (item.getGuid() != null) {
-                intent = new Intent(new Intent(Intent.ACTION_VIEW,
-                        Uri.parse(item.getGuid())));
+            String targetUrl = null;
+            if (item.getLink() != null && !item.getLink().isBlank()) {
+                targetUrl = item.getLink();
+            } else if (item.getGuid() != null && !item.getGuid().isBlank()) {
+                targetUrl = item.getGuid();
             }
 
-            if (intent != null) {
+            if (targetUrl != null) {
+                Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(targetUrl));
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-                context.startActivity(intent);
+                try {
+                    context.startActivity(intent);
+                } catch (ActivityNotFoundException ignored) {
+                }
             }
         }
     }
@@ -166,6 +169,7 @@ class FeedPageAdapter extends RecyclerView.Adapter<FeedPageAdapter.ViewHolder> {
     public void onBindViewHolder(@NonNull ViewHolder viewHolder, int position) {
         RssItem item = items.get(position);
 
+        viewHolder.display.animate().cancel();
         viewHolder.title.setVisibility(View.GONE);
         viewHolder.author.setVisibility(View.GONE);
         viewHolder.category.setVisibility(View.GONE);

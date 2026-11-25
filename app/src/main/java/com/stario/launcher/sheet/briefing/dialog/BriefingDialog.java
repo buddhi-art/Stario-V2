@@ -47,10 +47,14 @@ import com.stario.launcher.ui.Measurements;
 import com.stario.launcher.ui.common.pager.CustomDurationViewPager;
 import com.stario.launcher.ui.common.tabs.LeftTabLayout;
 import com.stario.launcher.ui.popup.PopupMenu;
+import com.stario.launcher.utils.objects.ObservableObject;
 
 import java.util.Objects;
 
 public class BriefingDialog extends SheetDialogFragment {
+    private ObservableObject.OnSet<Integer> statusBarListener;
+    private ObservableObject.OnSet<Integer> navListener;
+    private View.OnLayoutChangeListener titleLayoutListener;
     private RecyclerView.OnScrollListener scrollListener;
     private View.OnLayoutChangeListener layoutListener;
     private BriefingFeedList.FeedListener feedListener;
@@ -97,6 +101,10 @@ public class BriefingDialog extends SheetDialogFragment {
         };
         this.feedListener = new BriefingFeedList.FeedListener() {
             private void notifyUpdate() {
+                if (!isAdded() || getView() == null || adapter == null || pager == null) {
+                    return;
+                }
+
                 adapter.notifyDataSetChanged();
                 tabs.setViewPager(pager);
 
@@ -173,7 +181,7 @@ public class BriefingDialog extends SheetDialogFragment {
         pager.setAdapter(adapter);
 
         pager.post(() -> {
-            if (adapter.getCount() > 0) {
+            if (isAdded() && getView() != null && adapter != null && adapter.getCount() > 0) {
                 observePageRecycler(pager.getCurrentItem());
             }
         });
@@ -183,6 +191,10 @@ public class BriefingDialog extends SheetDialogFragment {
 
         tabs.setOverScrollMode(View.OVER_SCROLL_NEVER);
         tabs.setOnTabLongClickListener((tab, position) -> {
+            if (position < 0 || position >= list.size()) {
+                return;
+            }
+
             Vibrations.getInstance().vibrate();
             Resources resources = activity.getResources();
 
@@ -211,12 +223,17 @@ public class BriefingDialog extends SheetDialogFragment {
             return true;
         });
 
-        title.addOnLayoutChangeListener((v, left, top, right, bottom,
-                                         oldLeft, oldTop, oldRight, oldBottom) -> {
+        titleLayoutListener = (v, left, top, right, bottom,
+                               oldLeft, oldTop, oldRight, oldBottom) -> {
             if (recyclerToBeObserved != null) {
-                recyclerToBeObserved.post(() -> updateHeader(recyclerToBeObserved));
+                recyclerToBeObserved.post(() -> {
+                    if (isAdded() && getView() != null) {
+                        updateHeader(recyclerToBeObserved);
+                    }
+                });
             }
-        });
+        };
+        title.addOnLayoutChangeListener(titleLayoutListener);
 
         View.OnClickListener clickListener = new View.OnClickListener() {
             private BriefingConfigurator configurator;
@@ -244,10 +261,61 @@ public class BriefingDialog extends SheetDialogFragment {
             return false;
         });
 
-        Measurements.addStatusBarListener(value -> root.setPadding(0, value, 0, 0));
-        Measurements.addNavListener(value -> placeholder.setPadding(0, 0, 0, value));
+        statusBarListener = value -> {
+            if (root != null) {
+                root.setPadding(0, value, 0, 0);
+            }
+        };
+        navListener = value -> {
+            if (placeholder != null) {
+                placeholder.setPadding(0, 0, 0, value);
+            }
+        };
+        Measurements.addStatusBarListener(statusBarListener);
+        Measurements.addNavListener(navListener);
 
         return root;
+    }
+
+    @Override
+    public void onDestroyView() {
+        if (statusBarListener != null) {
+            Measurements.removeStatusBarListener(statusBarListener);
+            statusBarListener = null;
+        }
+        if (navListener != null) {
+            Measurements.removeNavListener(navListener);
+            navListener = null;
+        }
+        if (title != null && titleLayoutListener != null) {
+            title.removeOnLayoutChangeListener(titleLayoutListener);
+            titleLayoutListener = null;
+        }
+        if (recyclerToBeObserved != null) {
+            recyclerToBeObserved.removeOnScrollListener(scrollListener);
+            recyclerToBeObserved.removeOnLayoutChangeListener(layoutListener);
+            recyclerToBeObserved = null;
+        }
+        if (pager != null) {
+            if (listener != null) {
+                pager.removeOnPageChangeListener(listener);
+            }
+            pager.setAdapter(null);
+            pager = null;
+        }
+
+        if (list != null) {
+            list.removeOnFeedUpdateListener(feedListener);
+        }
+
+        root = null;
+        title = null;
+        tabs = null;
+        tabsContainer = null;
+        placeholder = null;
+        main = null;
+
+        super.onDestroyView();
     }
 
     @Override
@@ -309,7 +377,19 @@ public class BriefingDialog extends SheetDialogFragment {
     }
 
     private void updateHeader(float translation) {
+        if (title == null || tabsContainer == null) {
+            return;
+        }
+
         int maxTranslation = title.getMeasuredHeight();
+        if (maxTranslation <= 0) {
+            tabsContainer.setTranslationY(0);
+            title.setTranslationY(0);
+            title.setAlpha(1f);
+            title.setVisibility(View.VISIBLE);
+            return;
+        }
+
         translation = -Math.min(maxTranslation, translation);
 
         tabsContainer.setTranslationY(maxTranslation + translation);

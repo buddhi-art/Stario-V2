@@ -77,7 +77,7 @@ public class FeedConfigurator extends ActionDialog {
             Editable editable = name.getText();
             String currentTitle = feed.getTitle();
 
-            if (editable.length() > 0 &&
+            if (editable != null && editable.length() > 0 &&
                     (currentTitle == null || !currentTitle.equals(editable.toString()))) {
                 list.updateName(feed, editable.toString());
             }

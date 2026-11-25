@@ -19,17 +19,23 @@ package com.stario.launcher.sheet.briefing.rss
 
 import com.prof18.rssparser.RssParser
 import com.prof18.rssparser.model.RssChannel
-import kotlinx.coroutines.DelicateCoroutinesApi
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.future.future
 import java.util.concurrent.CompletableFuture
 
 class RSSHelperKt {
     companion object {
+        private const val MAX_CONCURRENT_FEEDS = 4
+
+        private val scope = CoroutineScope(
+            SupervisorJob() + Dispatchers.IO.limitedParallelism(MAX_CONCURRENT_FEEDS)
+        )
+
         @JvmStatic
-        @OptIn(DelicateCoroutinesApi::class)
         fun parseFeed(parser: RssParser, url: String): CompletableFuture<RssChannel> =
-            GlobalScope.future {
+            scope.future {
                 parser.getRssChannel(url)
             }
     }

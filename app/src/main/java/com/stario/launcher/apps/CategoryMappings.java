@@ -26,9 +26,9 @@ import com.stario.launcher.Stario;
 import com.stario.launcher.exceptions.NoExistingInstanceException;
 import com.stario.launcher.preferences.Entry;
 
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 public class CategoryMappings {
     private static CategoryMappings instance;
@@ -90,7 +90,7 @@ public class CategoryMappings {
                 Category category
         ) {
             this.category = category;
-            this.indexCache = new HashMap<>();
+            this.indexCache = new ConcurrentHashMap<>();
             this.categoryMap = provider.provide(category.identifier.toString());
 
             for (Map.Entry<String, ?> entry : categoryMap.getAll().entrySet()) {
@@ -110,6 +110,16 @@ public class CategoryMappings {
 
         @Override
         public int compare(LauncherApplication a, LauncherApplication b) {
+            if (a == b) {
+                return 0;
+            }
+            if (a == null) {
+                return -1;
+            }
+            if (b == null) {
+                return 1;
+            }
+
             Integer aIndex = indexCache.get(getApplicationKey(a));
             Integer bIndex = indexCache.get(getApplicationKey(b));
 
@@ -127,7 +137,7 @@ public class CategoryMappings {
         }
 
         @Override
-        void updatePermutation() {
+        synchronized void updatePermutation() {
             List<LauncherApplication> applications = category.getAll();
 
             SharedPreferences.Editor editor = categoryMap.edit();
@@ -153,7 +163,7 @@ public class CategoryMappings {
         private final SharedPreferences categoryMap;
 
         private MapComparator(SharedPreferencesProvider provider) {
-            this.indexCache = new HashMap<>();
+            this.indexCache = new ConcurrentHashMap<>();
             this.categoryMap = provider.provide("CATEGORIES");
 
             for (Map.Entry<String, ?> entry : categoryMap.getAll().entrySet()) {
@@ -167,6 +177,16 @@ public class CategoryMappings {
 
         @Override
         public int compare(Category a, Category b) {
+            if (a == b) {
+                return 0;
+            }
+            if (a == null) {
+                return -1;
+            }
+            if (b == null) {
+                return 1;
+            }
+
             Integer aIndex = indexCache.get(a.identifier.toString());
             Integer bIndex = indexCache.get(b.identifier.toString());
 
@@ -184,7 +204,7 @@ public class CategoryMappings {
         }
 
         @Override
-        void updatePermutation() {
+        synchronized void updatePermutation() {
             List<Category> categories = CategoryManager.getInstance().getAll();
 
             SharedPreferences.Editor editor = categoryMap.edit();

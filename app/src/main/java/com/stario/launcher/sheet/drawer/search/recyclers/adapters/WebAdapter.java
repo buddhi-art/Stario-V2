@@ -19,6 +19,7 @@ package com.stario.launcher.sheet.drawer.search.recyclers.adapters;
 
 import android.annotation.SuppressLint;
 import android.app.ActivityOptions;
+import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.graphics.drawable.Drawable;
@@ -58,6 +59,8 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -72,6 +75,7 @@ public class WebAdapter extends AbstractSearchListAdapter<WebAdapter.ViewHolder>
 
     private final static String TAG = "com.stario.launcher.WebAdapter";
     private final static String RESULTS_URL = "https://kagi.com/api/v0/search?limit=6&q=";
+    private final static int REQUEST_TIMEOUT = 10_000;
     private final static Pattern BASE_URL_REGEX = Pattern.compile("^(?:https?://)?(?:www\\.)?([^/?:]+)");
     private final static Pattern PATH_REGEX = Pattern.compile("^(?:https?://)?(?:www\\.)?[^/]+(/[^/?#]+)+");
 
@@ -81,6 +85,7 @@ public class WebAdapter extends AbstractSearchListAdapter<WebAdapter.ViewHolder>
 
     private CompletableFuture<ArrayList<WebEntry>> runningTask;
     private UnauthorizedListener listener;
+    private long searchSequence = 0;
 
     public WebAdapter(ThemedActivity activity) {
         this.activity = activity;
@@ -110,6 +115,9 @@ public class WebAdapter extends AbstractSearchListAdapter<WebAdapter.ViewHolder>
 
     @Override
     public void update(String query) {
+        searchSequence++;
+        final long currentSequence = searchSequence;
+
         searchResults.clear();
         notifyInternal();
 
@@ -124,7 +132,7 @@ public class WebAdapter extends AbstractSearchListAdapter<WebAdapter.ViewHolder>
                 !apiKey.isEmpty() && query != null && !query.isEmpty()) {
             String constraint = query.toLowerCase();
 
-            runningTask = Utils.submitTask(() -> {
+            CompletableFuture<ArrayList<WebEntry>> task = Utils.submitTask(() -> {
                 ArrayList<WebEntry> results = new ArrayList<>();
 
                 JSONObject object;
@@ -132,7 +140,7 @@ public class WebAdapter extends AbstractSearchListAdapter<WebAdapter.ViewHolder>
                     object = getData(constraint, apiKey);
                 } catch (Unauthorized exception) {
                     UiUtils.post(() -> {
-                        if (listener != null) {
+                        if (currentSequence == searchSequence && listener != null) {
                             listener.onDenied();
                         }
                     });
@@ -191,41 +199,58 @@ public class WebAdapter extends AbstractSearchListAdapter<WebAdapter.ViewHolder>
                 return results;
             });
 
-            runningTask.thenApply(results -> {
-                UiUtils.post(() -> {
-                    searchResults.clear();
+            runningTask = task;
 
+            task.thenAccept(results -> UiUtils.post(() -> {
+                if (currentSequence != searchSequence || task.isCancelled() || activity.isDestroyed()) {
+                    return;
+                }
+
+                searchResults.clear();
+
+                if (results != null) {
                     for (WebEntry entry : results) {
                         searchResults.add(0, entry);
                     }
+                }
 
-                    notifyInternal();
+                notifyInternal();
 
+                if (runningTask == task) {
                     runningTask = null;
-                });
-
-                return results;
-            });
+                }
+            }));
         }
     }
 
     private JSONObject getData(String query, String key) throws Unauthorized {
+        HttpURLConnection connection = null;
         try {
-            HttpURLConnection connection = (HttpURLConnection) new URL(RESULTS_URL + query).openConnection();
+            // noinspection CharsetObjectCanBeUsed
+            String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8.name());
+            connection = (HttpURLConnection) new URL(RESULTS_URL + encodedQuery).openConnection();
+            connection.setConnectTimeout(REQUEST_TIMEOUT);
+            connection.setReadTimeout(REQUEST_TIMEOUT);
             connection.setRequestMethod("GET");
             connection.setRequestProperty("Authorization", "Bot " + key);
             connection.addRequestProperty("Accept", "application/json");
             connection.setRequestProperty("Content-Type", "application/json");
 
-            if (connection.getResponseCode() >= 200 && connection.getResponseCode() < 400) {
-                BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getInputStream()));
-
-                return new JSONObject(reader.lines().collect(Collectors.joining("\n")));
-            } else if (connection.getResponseCode() == HttpURLConnection.HTTP_UNAUTHORIZED) {
+            int responseCode = connection.getResponseCode();
+            if (responseCode >= 200 && responseCode < 400) {
+                try (BufferedReader reader = new BufferedReader(
+                        new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+                    return new JSONObject(reader.lines().collect(Collectors.joining("\n")));
+                }
+            } else if (responseCode == HttpURLConnection.HTTP_UNAUTHORIZED) {
                 throw new Unauthorized();
             }
         } catch (IOException | JSONException exception) {
             Log.e(TAG, "getData: ", exception);
+        } finally {
+            if (connection != null) {
+                connection.disconnect();
+            }
         }
 
         return null;
@@ -292,9 +317,23 @@ public class WebAdapter extends AbstractSearchListAdapter<WebAdapter.ViewHolder>
                     activityOptions.setSplashScreenStyle(SplashScreen.SPLASH_SCREEN_STYLE_ICON);
                 }
 
-                activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(entry.url)), activityOptions.toBundle());
+                try {
+                    activity.startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(entry.url)), activityOptions.toBundle());
+                } catch (ActivityNotFoundException exception) {
+                    Log.e(TAG, "Unable to open URL: " + entry.url, exception);
+                }
             });
         }
+    }
+
+    @Override
+    public void onDetachedFromRecyclerView(@NonNull RecyclerView recyclerView) {
+        searchSequence++;
+        if (runningTask != null && !runningTask.isDone()) {
+            runningTask.cancel(true);
+            runningTask = null;
+        }
+        super.onDetachedFromRecyclerView(recyclerView);
     }
 
     @NonNull

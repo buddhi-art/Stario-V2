@@ -24,6 +24,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
@@ -66,22 +67,33 @@ import com.stario.launcher.ui.utils.UiUtils;
 import com.stario.launcher.ui.utils.animation.Animation;
 import com.stario.launcher.ui.utils.animation.KeyboardAnimationHelper;
 import com.stario.launcher.utils.Utils;
+import com.stario.launcher.utils.objects.ObservableObject;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SearchFragment extends Fragment {
     private static final int SCROLL_STOP_TIMEOUT = 50;
+    private static final int MAX_KEYBOARD_SHOW_ATTEMPTS = 25;
+    private static final long KEYBOARD_SHOW_TIMEOUT_MS = 1000L;
+    private static final long KEYBOARD_SHOW_RETRY_DELAY_MS = 40L;
 
     public static final String TAG = "SearchFragment";
     public static final String SEARCH_HIDDEN_APPS = "com.stario.SEARCH_HIDDEN_APPS";
     public static final int MAX_APP_QUERY_ITEMS = 4;
 
+    private ObservableObject.OnSet<Integer> statusBarListener;
+    private ObservableObject.OnSet<Integer> navListener;
+    private View.OnLayoutChangeListener searchLayoutChangeListener;
     private SearchLayoutTransition searchLayoutTransition;
     private KeyboardHeightProvider heightProvider;
     private SharedPreferences searchPreferences;
     private ImeAnimationController controller;
     private KeyPreImeListeningEditText search;
     private ConstraintLayout searchContainer;
+    private Runnable pendingSuggestionRunnable;
+    private Runnable keyboardShowRunnable;
+    private Runnable hintPaddingRunnable;
+    private Runnable rootInitRunnable;
     private RecyclerView suggestions;
     private ThemedActivity activity;
     private HomeWatcher homeWatcher;
@@ -91,6 +103,8 @@ public class SearchFragment extends Fragment {
     private ViewGroup content;
     private View webContainer;
     private View base;
+    private View hint;
+    private View root;
 
     public SearchFragment() {
         super();
@@ -146,7 +160,7 @@ public class SearchFragment extends Fragment {
                              @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
         postponeEnterTransition();
 
-        View root = inflater.inflate(R.layout.search, container, false);
+        root = inflater.inflate(R.layout.search, container, false);
 
         root.setOnTouchListener((v, event) -> true);
 
@@ -155,7 +169,7 @@ public class SearchFragment extends Fragment {
         PreEventNestedScrollView scrollView = root.findViewById(R.id.scroller);
         View unauthorized = root.findViewById(R.id.unauthorized);
         View searching = root.findViewById(R.id.searching);
-        View hint = root.findViewById(R.id.result_hint);
+        hint = root.findViewById(R.id.result_hint);
         FadingEdgeLayout fader = root.findViewById(R.id.fader);
         searchContainer = root.findViewById(R.id.search_container);
         webContainer = root.findViewById(R.id.web_container);
@@ -257,7 +271,7 @@ public class SearchFragment extends Fragment {
         search.setInputType(InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS |
                 InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
 
-        Measurements.addStatusBarListener(value -> {
+        statusBarListener = value -> {
             scrollView.setPadding(scrollView.getPaddingLeft(),
                     value + Measurements.getDefaultPadding(),
                     scrollView.getPaddingRight(), scrollView.getPaddingBottom());
@@ -265,23 +279,26 @@ public class SearchFragment extends Fragment {
             fader.setFadeSizes(value, 0,
                     Measurements.getNavHeight() + Measurements.getDefaultPadding() +
                             search.getMeasuredHeight(), 0);
-        });
+        };
+        Measurements.addStatusBarListener(statusBarListener);
 
-        Measurements.addNavListener(value -> {
+        navListener = value -> {
             scrollView.setPadding(scrollView.getPaddingLeft(), scrollView.getPaddingTop(),
                     scrollView.getPaddingRight(), value +
                             Measurements.getDefaultPadding() + search.getMeasuredHeight());
 
             ((ViewGroup.MarginLayoutParams) search.getLayoutParams()).bottomMargin =
-                    value + (Utils.isMinimumSDK(Build.VERSION_CODES.R) ? 0 : heightProvider.getKeyboardHeight());
+                    value + (Utils.isMinimumSDK(Build.VERSION_CODES.R) || heightProvider == null ?
+                            0 : heightProvider.getKeyboardHeight());
             search.requestLayout();
 
             fader.setFadeSizes(Measurements.getSysUIHeight(), 0,
                     value + Measurements.getDefaultPadding() +
                             search.getMeasuredHeight(), 0);
-        });
+        };
+        Measurements.addNavListener(navListener);
 
-        search.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+        searchLayoutChangeListener = (v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
             fader.setFadeSizes(Measurements.getSysUIHeight(), 0,
                     Measurements.getNavHeight() + Measurements.getDefaultPadding() +
                             search.getMeasuredHeight(), 0);
@@ -289,7 +306,8 @@ public class SearchFragment extends Fragment {
             scrollView.setPadding(scrollView.getPaddingLeft(), scrollView.getPaddingTop(),
                     scrollView.getPaddingRight(), Measurements.getNavHeight() +
                             Measurements.getDefaultPadding() + search.getMeasuredHeight());
-        });
+        };
+        search.addOnLayoutChangeListener(searchLayoutChangeListener);
 
         heightProvider.start();
 
@@ -509,11 +527,18 @@ public class SearchFragment extends Fragment {
                 hint.setVisibility(!filteredQuery.isEmpty() &&
                         searchPreferences.getBoolean(WebAdapter.SEARCH_RESULTS, false) ?
                         View.VISIBLE : View.GONE);
-                hint.post(() -> {
+                if (hintPaddingRunnable != null) {
+                    hint.removeCallbacks(hintPaddingRunnable);
+                }
+                hintPaddingRunnable = () -> {
+                    if (!isAdded() || getView() == null || content == null || hint == null) {
+                        return;
+                    }
                     content.setPadding(content.getPaddingLeft(), content.getPaddingTop(), content.getPaddingRight(),
-                            (Utils.isMinimumSDK(Build.VERSION_CODES.R) ? 0 : heightProvider.getKeyboardHeight()) +
+                            (Utils.isMinimumSDK(Build.VERSION_CODES.R) || heightProvider == null ? 0 : heightProvider.getKeyboardHeight()) +
                                     (hint.getVisibility() == View.VISIBLE ? hint.getHeight() : 0));
-                });
+                };
+                hint.post(hintPaddingRunnable);
 
                 if (filteredQuery.equals(query)) {
                     if (base.getVisibility() == View.VISIBLE) {
@@ -521,19 +546,24 @@ public class SearchFragment extends Fragment {
                         optionAdapter.update(query);
 
                         long timeStamp = System.currentTimeMillis();
+                        lastRegisteredTimestamp = timeStamp;
+
+                        if (pendingSuggestionRunnable != null) {
+                            search.removeCallbacks(pendingSuggestionRunnable);
+                            pendingSuggestionRunnable = null;
+                        }
 
                         if (query.isBlank()) {
                             autosuggestAdapter.update(query);
                         } else {
                             // don't process text changes too often
-                            search.postDelayed(() -> {
-                                if (timeStamp == lastRegisteredTimestamp) {
+                            pendingSuggestionRunnable = () -> {
+                                if (isAdded() && getView() != null && timeStamp == lastRegisteredTimestamp) {
                                     autosuggestAdapter.update(query);
                                 }
-                            }, SUGGESTION_PROCESS_INTERVAL);
+                            };
+                            search.postDelayed(pendingSuggestionRunnable, SUGGESTION_PROCESS_INTERVAL);
                         }
-
-                        lastRegisteredTimestamp = System.currentTimeMillis();
                     }
                 } else {
                     search.setText(filteredQuery);
@@ -541,7 +571,11 @@ public class SearchFragment extends Fragment {
             }
         });
 
-        root.post(() -> {
+        rootInitRunnable = () -> {
+            if (!isAdded() || activity == null || search == null || root == null || !root.isAttachedToWindow()) {
+                return;
+            }
+
             InputMethodManager inputMethodManager = (InputMethodManager)
                     activity.getSystemService(Context.INPUT_METHOD_SERVICE);
 
@@ -552,27 +586,81 @@ public class SearchFragment extends Fragment {
 
             startPostponedEnterTransition();
 
-            search.post(new Runnable() {
+            if (keyboardShowRunnable != null) {
+                search.removeCallbacks(keyboardShowRunnable);
+            }
+
+            final long startTimeMs = SystemClock.uptimeMillis();
+            keyboardShowRunnable = new Runnable() {
+                private int attempts = 0;
+
                 @Override
                 public void run() {
-                    UiUtils.showKeyboard(search);
+                    if (!isAdded() || activity == null || search == null || !search.isAttachedToWindow()) {
+                        return;
+                    }
 
-                    if (!UiUtils.isKeyboardVisible(search)) {
-                        search.post(this);
+                    UiUtils.showKeyboard(search);
+                    attempts++;
+
+                    if (!UiUtils.isKeyboardVisible(search)
+                            && attempts < MAX_KEYBOARD_SHOW_ATTEMPTS
+                            && (SystemClock.uptimeMillis() - startTimeMs) < KEYBOARD_SHOW_TIMEOUT_MS) {
+                        search.postDelayed(this, KEYBOARD_SHOW_RETRY_DELAY_MS);
                     }
                 }
-            });
-        });
+            };
+            search.post(keyboardShowRunnable);
+        };
+        root.post(rootInitRunnable);
 
         return root;
     }
 
     @Override
     public void onDestroyView() {
+        if (statusBarListener != null) {
+            Measurements.removeStatusBarListener(statusBarListener);
+            statusBarListener = null;
+        }
+        if (navListener != null) {
+            Measurements.removeNavListener(navListener);
+            navListener = null;
+        }
+        if (root != null && rootInitRunnable != null) {
+            root.removeCallbacks(rootInitRunnable);
+            rootInitRunnable = null;
+        }
+        if (hint != null && hintPaddingRunnable != null) {
+            hint.removeCallbacks(hintPaddingRunnable);
+            hintPaddingRunnable = null;
+        }
+        if (search != null) {
+            if (searchLayoutChangeListener != null) {
+                search.removeOnLayoutChangeListener(searchLayoutChangeListener);
+                searchLayoutChangeListener = null;
+            }
+            if (pendingSuggestionRunnable != null) {
+                search.removeCallbacks(pendingSuggestionRunnable);
+                pendingSuggestionRunnable = null;
+            }
+            if (keyboardShowRunnable != null) {
+                search.removeCallbacks(keyboardShowRunnable);
+                keyboardShowRunnable = null;
+            }
+        }
+        if (heightProvider != null) {
+            heightProvider.close();
+            heightProvider = null;
+        }
+
         suggestions.setAdapter(null);
         options.setAdapter(null);
         apps.setAdapter(null);
         web.setAdapter(null);
+
+        root = null;
+        hint = null;
 
         super.onDestroyView();
     }
@@ -600,13 +688,30 @@ public class SearchFragment extends Fragment {
     @Override
     public void onStop() {
         homeWatcher.stopWatch();
-        UiUtils.hideKeyboard(search);
+        if (root != null && rootInitRunnable != null) {
+            root.removeCallbacks(rootInitRunnable);
+        }
+        if (search != null) {
+            if (keyboardShowRunnable != null) {
+                search.removeCallbacks(keyboardShowRunnable);
+            }
+            if (pendingSuggestionRunnable != null) {
+                search.removeCallbacks(pendingSuggestionRunnable);
+            }
+            UiUtils.hideKeyboard(search);
+        }
 
         super.onStop();
 
-        search.setText(null);
-        base.setVisibility(View.VISIBLE);
-        webContainer.setVisibility(View.GONE);
+        if (search != null) {
+            search.setText(null);
+        }
+        if (base != null) {
+            base.setVisibility(View.VISIBLE);
+        }
+        if (webContainer != null) {
+            webContainer.setVisibility(View.GONE);
+        }
     }
 
     @Override

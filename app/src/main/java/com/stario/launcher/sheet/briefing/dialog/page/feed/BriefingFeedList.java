@@ -30,6 +30,7 @@ import org.json.JSONArray;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class BriefingFeedList {
     private static final String FEEDS_KEY = "com.stario.FEEDS";
@@ -41,7 +42,7 @@ public class BriefingFeedList {
 
     private BriefingFeedList(ThemedActivity activity) {
         this.items = new ArrayList<>();
-        this.listeners = new ArrayList<>();
+        this.listeners = new CopyOnWriteArrayList<>();
         this.state = activity.getApplicationContext()
                 .getSharedPreferences(Entry.BRIEFING);
 
@@ -81,12 +82,15 @@ public class BriefingFeedList {
             JSONArray array = new JSONArray(feedsSerial);
 
             for (int index = 0; index < array.length(); index++) {
-                Feed feed = Feed.deserialize((String) array.get(index));
+                Object rawEntry = array.opt(index);
+                if (rawEntry instanceof String) {
+                    Feed feed = Feed.deserialize((String) rawEntry);
 
-                if (feed != null && !items.contains(feed)) {
-                    items.add(feed);
-                    for (FeedListener listener : listeners) {
-                        listener.onInserted(size() - 1);
+                    if (feed != null && !items.contains(feed)) {
+                        items.add(feed);
+                        for (FeedListener listener : listeners) {
+                            listener.onInserted(size() - 1);
+                        }
                     }
                 }
             }
@@ -151,7 +155,10 @@ public class BriefingFeedList {
     private void serialize() {
         ArrayList<String> serials = new ArrayList<>();
         for (Feed item : items) {
-            serials.add(item.serialize());
+            String serialized = item.serialize();
+            if (serialized != null) {
+                serials.add(serialized);
+            }
         }
 
         state.edit().putString(FEEDS_KEY,

@@ -24,6 +24,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
 
 public class Category {
     public final @NonNull UUID identifier;
@@ -36,16 +37,16 @@ public class Category {
     public Category(@NonNull UUID identifier) {
         this.identifier = identifier;
         this.applications = Collections.synchronizedList(new ArrayList<>());
-        this.listeners = Collections.synchronizedList(new ArrayList<>());
+        this.listeners = new CopyOnWriteArrayList<>();
         this.comparator = CategoryMappings.getCategoryApplicationComparator(this);
     }
 
-    public int getSize() {
+    public synchronized int getSize() {
         return applications.size();
     }
 
     @Nullable
-    public LauncherApplication get(int index) {
+    public synchronized LauncherApplication get(int index) {
         if (index >= 0 && index < applications.size()) {
             return applications.get(index);
         } else {
@@ -53,16 +54,20 @@ public class Category {
         }
     }
 
-    public List<LauncherApplication> getAll() {
-        return Collections.unmodifiableList(applications);
+    public synchronized List<LauncherApplication> getAll() {
+        return Collections.unmodifiableList(new ArrayList<>(applications));
     }
 
     synchronized void addApplication(LauncherApplication applicationToAdd) {
+        if (applicationToAdd == null) {
+            return;
+        }
+
         int left = 0;
         int right = applications.size() - 1;
 
         while (left <= right) {
-            int middle = (left + right) / 2;
+            int middle = (left + right) >>> 1;
 
             LauncherApplication applicationAtMiddle = applications.get(middle);
             int compareValue = comparator.compare(applicationAtMiddle, applicationToAdd);
@@ -71,8 +76,24 @@ public class Category {
                 left = middle + 1;
             } else if (compareValue > 0) {
                 right = middle - 1;
-            } else if (!applicationAtMiddle.info.packageName.equals(applicationToAdd.info.packageName) ||
-                    !applicationAtMiddle.getProfile().equals(applicationToAdd.getProfile())) {
+            } else {
+                for (int i = middle; i < applications.size() &&
+                        comparator.compare(applications.get(i), applicationToAdd) == 0; i++) {
+                    LauncherApplication candidate = applications.get(i);
+                    if (candidate.info.packageName.equals(applicationToAdd.info.packageName) &&
+                            candidate.getProfile().equals(applicationToAdd.getProfile())) {
+                        return;
+                    }
+                }
+                for (int i = middle - 1; i >= 0 &&
+                        comparator.compare(applications.get(i), applicationToAdd) == 0; i--) {
+                    LauncherApplication candidate = applications.get(i);
+                    if (candidate.info.packageName.equals(applicationToAdd.info.packageName) &&
+                            candidate.getProfile().equals(applicationToAdd.getProfile())) {
+                        return;
+                    }
+                }
+
                 for (CategoryItemListener listener : listeners) {
                     listener.onPrepareInsertion(applicationToAdd);
                 }
@@ -84,8 +105,6 @@ public class Category {
                 }
 
                 return;
-            } else {
-                return; // same package found
             }
         }
 
@@ -101,6 +120,10 @@ public class Category {
     }
 
     synchronized void removeApplication(LauncherApplication applicationToRemove) {
+        if (applicationToRemove == null) {
+            return;
+        }
+
         for (int index = 0; index < applications.size(); index++) {
             LauncherApplication application = applications.get(index);
 
@@ -122,7 +145,12 @@ public class Category {
         }
     }
 
-    public void swap(int index1, int index2) {
+    public synchronized void swap(int index1, int index2) {
+        if (index1 < 0 || index1 >= applications.size() ||
+                index2 < 0 || index2 >= applications.size() || index1 == index2) {
+            return;
+        }
+
         Collections.swap(applications, index1, index2);
 
         comparator.updatePermutation();
@@ -132,7 +160,7 @@ public class Category {
         }
     }
 
-    public int indexOf(LauncherApplication application) {
+    public synchronized int indexOf(LauncherApplication application) {
         return applications.indexOf(application);
     }
 

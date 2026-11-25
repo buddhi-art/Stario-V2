@@ -37,6 +37,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class CategoryManager {
     private static final HashMap<Integer, Integer> DEFAULT_CATEGORIES = new HashMap<>() {{
@@ -74,7 +76,7 @@ public final class CategoryManager {
         this.customCategoryNames = stario.getSharedPreferences(Entry.CATEGORY_NAMES);
         this.resolvedCategoryResources = new HashMap<>();
         this.profileListeners = new HashMap<>();
-        this.categoryListeners = new ArrayList<>();
+        this.categoryListeners = new CopyOnWriteArrayList<>();
 
         CategoryMappings.from(stario);
         comparator = CategoryMappings.getCategoryComparator();
@@ -127,7 +129,7 @@ public final class CategoryManager {
         LauncherApplicationListener listener = new LauncherApplicationListener() {
             @Override
             public void onUpdated(LauncherApplication application) {
-                for (Category category : categories) {
+                for (Category category : getAll()) {
                     if (category.applications.contains(application)) {
                         for (Category.CategoryItemListener itemListener : category.listeners) {
                             itemListener.onUpdated(application);
@@ -151,15 +153,20 @@ public final class CategoryManager {
     }
 
     public void addOnReadyListener(CategoryManager.OnLoadReadyListener readyListener) {
+        if (readyListener == null) {
+            return;
+        }
+
         if (isReady()) {
             readyListener.onReady();
 
             return;
         }
 
+        AtomicBoolean notified = new AtomicBoolean(false);
         for (ProfileApplicationManager manager : ProfileManager.getInstance().getProfiles()) {
             manager.addOnReadyListener(m -> {
-                if (isReady()) {
+                if (isReady() && notified.compareAndSet(false, true)) {
                     readyListener.onReady();
                 }
             });
@@ -176,11 +183,11 @@ public final class CategoryManager {
         return true;
     }
 
-    public Category get(int index) {
+    public synchronized Category get(int index) {
         return categories.get(index);
     }
 
-    public Category get(UUID identifier) {
+    public synchronized Category get(UUID identifier) {
         for (Category category : categories) {
             if (category.identifier.equals(identifier)) {
                 return category;
@@ -194,7 +201,7 @@ public final class CategoryManager {
         return getIdentifier(name, false);
     }
 
-    public UUID getIdentifier(String name, boolean includeDefaults) {
+    public synchronized UUID getIdentifier(String name, boolean includeDefaults) {
         if (name == null) {
             return null;
         }
@@ -236,9 +243,9 @@ public final class CategoryManager {
         return name;
     }
 
-    private int indexOf(UUID identifier) {
-        for (int index = 0; index < size(); index++) {
-            if (get(index).identifier.equals(identifier)) {
+    private synchronized int indexOf(UUID identifier) {
+        for (int index = 0; index < categories.size(); index++) {
+            if (categories.get(index).identifier.equals(identifier)) {
                 return index;
             }
         }
@@ -246,15 +253,15 @@ public final class CategoryManager {
         return NO_CATEGORY;
     }
 
-    public int indexOf(Category category) {
+    public synchronized int indexOf(Category category) {
         return categories.indexOf(category);
     }
 
-    public List<Category> getAll() {
-        return Collections.unmodifiableList(categories);
+    public synchronized List<Category> getAll() {
+        return Collections.unmodifiableList(new ArrayList<>(categories));
     }
 
-    public String getSuggestion(String input) {
+    public synchronized String getSuggestion(String input) {
         if (input == null) {
             return null;
         }
@@ -287,9 +294,15 @@ public final class CategoryManager {
         if (remappedCategories.contains(key)) {
             String identifier = remappedCategories.getString(key, null);
 
-            try {
-                return UUID.fromString(identifier);
-            } catch (IllegalArgumentException exception) {
+            if (identifier != null) {
+                try {
+                    return UUID.fromString(identifier);
+                } catch (IllegalArgumentException exception) {
+                    remappedCategories.edit()
+                            .remove(key)
+                            .apply();
+                }
+            } else {
                 remappedCategories.edit()
                         .remove(key)
                         .apply();
@@ -303,7 +316,7 @@ public final class CategoryManager {
         return Utils.intToUUID(applicationInfo.category);
     }
 
-    public int size() {
+    public synchronized int size() {
         return categories.size();
     }
 
@@ -314,7 +327,7 @@ public final class CategoryManager {
         int right = size() - 1;
 
         while (left <= right) {
-            int middle = (left + right) / 2;
+            int middle = (left + right) >>> 1;
 
             Category categoryAtMiddle = get(middle);
             int compareValue = comparator.compare(categoryAtMiddle, categoryToAdd);
@@ -372,7 +385,8 @@ public final class CategoryManager {
     }
 
     public void updateCategory(UUID categoryIdentifier, String text) {
-        if (getIdentifier(text, true) != null) {
+        if (categoryIdentifier == null || text == null || text.isEmpty() ||
+                getIdentifier(text, true) != null) {
             return;
         }
 
@@ -380,55 +394,80 @@ public final class CategoryManager {
                 .putString(categoryIdentifier.toString(), text)
                 .apply();
 
-        for (CategoryListener listener : categoryListeners) {
-            listener.onChanged(get(categoryIdentifier));
+        Category updated = get(categoryIdentifier);
+        if (updated != null) {
+            for (CategoryListener listener : categoryListeners) {
+                listener.onChanged(updated);
+            }
         }
     }
 
     public synchronized void addApplication(LauncherApplication application) {
+        if (application == null) {
+            return;
+        }
+
         ProfileApplicationManager manager =
                 ProfileManager.getInstance()
                         .getProfile(application.getProfile());
 
         if (manager != null && manager.isVisibleToUser(application)) {
+            final UUID categoryId = application.getCategory();
             UiUtils.post(() -> {
-                int index = indexOf(application.getCategory());
+                synchronized (CategoryManager.this) {
+                    int index = indexOf(categoryId);
 
-                if (index == NO_CATEGORY) {
-                    index = addCategory(application.getCategory());
+                    if (index == NO_CATEGORY) {
+                        index = addCategory(categoryId);
+                    }
+
+                    Category category = get(index);
+                    category.addApplication(application);
                 }
-
-                Category category = get(index);
-                category.addApplication(application);
             });
         }
     }
 
     public synchronized void removeApplication(LauncherApplication application) {
-        int index = indexOf(application.getCategory());
+        if (application == null) {
+            return;
+        }
 
-        if (index != NO_CATEGORY) {
+        final UUID categoryId = application.getCategory();
+        if (indexOf(categoryId) != NO_CATEGORY) {
             UiUtils.post(() -> {
-                Category category = get(index);
-                category.removeApplication(application);
-
-                if (category.getSize() == 0) {
-                    for (CategoryListener listener : categoryListeners) {
-                        listener.onPrepareRemoval(category);
+                synchronized (CategoryManager.this) {
+                    int index = indexOf(categoryId);
+                    if (index == NO_CATEGORY) {
+                        return;
                     }
 
-                    category.clearListeners();
-                    categories.remove(index);
+                    Category category = get(index);
+                    category.removeApplication(application);
 
-                    for (CategoryListener listener : categoryListeners) {
-                        listener.onRemoved(category);
+                    if (category.getSize() == 0) {
+                        for (CategoryListener listener : categoryListeners) {
+                            listener.onPrepareRemoval(category);
+                        }
+
+                        category.clearListeners();
+                        categories.remove(index);
+
+                        for (CategoryListener listener : categoryListeners) {
+                            listener.onRemoved(category);
+                        }
                     }
                 }
             });
         }
     }
 
-    public void swap(int index1, int index2) {
+    public synchronized void swap(int index1, int index2) {
+        if (index1 < 0 || index1 >= categories.size() ||
+                index2 < 0 || index2 >= categories.size() || index1 == index2) {
+            return;
+        }
+
         Collections.swap(categories, index1, index2);
 
         comparator.updatePermutation();

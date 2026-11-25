@@ -38,6 +38,8 @@ import androidx.annotation.Nullable;
 import com.stario.launcher.utils.Utils;
 import com.stario.launcher.utils.objects.ObservableObject;
 
+import java.util.Collections;
+import java.util.Set;
 import java.util.WeakHashMap;
 
 public class Measurements {
@@ -48,6 +50,9 @@ public class Measurements {
     private static final ObservableObject<Float> ANIMATOR_DURATION_SCALE = new ObservableObject<>(1f);
     private static final ObservableObject<Float> TRANSITION_ANIMATION_SCALE = new ObservableObject<>(1f);
     private static final WeakHashMap<View, OnMeasureRoot> LISTENERS = new WeakHashMap<>();
+    private static final Set<Context> OBSERVER_CONTEXTS =
+            Collections.newSetFromMap(new WeakHashMap<>());
+    private static final Object OBSERVER_LOCK = new Object();
 
     private static ContentObserver contentObserver = null;
     private static boolean measured = false;
@@ -132,68 +137,97 @@ public class Measurements {
         measured = true;
     }
 
-    private static void registerContentObservers(Context context) {
-        if (contentObserver == null) {
+    private static Context unwrapObserverContext(@NonNull Context context) {
+        Context current = context;
+        while (current instanceof ContextWrapper) {
+            if (current instanceof Activity) {
+                return current;
+            }
+            current = ((ContextWrapper) current).getBaseContext();
+        }
+        return context;
+    }
+
+    public static void registerContentObservers(Context context) {
+        if (context == null) {
+            return;
+        }
+
+        synchronized (OBSERVER_LOCK) {
             Context appContext = context.getApplicationContext();
-            ContentResolver resolver = appContext.getContentResolver();
-            WINDOW_ANIMATION_SCALE.updateObject(Settings.Global.getFloat(
-                    resolver, Settings.Global.WINDOW_ANIMATION_SCALE,
-                    1.0f
-            ));
-            TRANSITION_ANIMATION_SCALE.updateObject(Settings.Global.getFloat(
-                    resolver, Settings.Global.TRANSITION_ANIMATION_SCALE,
-                    1.0f
-            ));
-            ANIMATOR_DURATION_SCALE.updateObject(Settings.Global.getFloat(
-                    resolver, Settings.Global.ANIMATOR_DURATION_SCALE,
-                    1.0f
-            ));
+            if (appContext == null) {
+                appContext = context;
+            }
 
-            contentObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
-                @Override
-                public void onChange(boolean selfChange) {
-                    onChange(selfChange, null);
-                }
+            OBSERVER_CONTEXTS.add(unwrapObserverContext(context));
 
-                @Override
-                public void onChange(boolean selfChange, @Nullable Uri uri) {
-                    WINDOW_ANIMATION_SCALE.updateObject(Settings.Global.getFloat(
-                            resolver, Settings.Global.WINDOW_ANIMATION_SCALE,
-                            1.0f
-                    ));
-                    TRANSITION_ANIMATION_SCALE.updateObject(Settings.Global.getFloat(
-                            resolver, Settings.Global.TRANSITION_ANIMATION_SCALE,
-                            1.0f
-                    ));
-                    ANIMATOR_DURATION_SCALE.updateObject(Settings.Global.getFloat(
-                            resolver, Settings.Global.ANIMATOR_DURATION_SCALE,
-                            1.0f
-                    ));
-                }
-            };
+            if (contentObserver == null) {
+                ContentResolver resolver = appContext.getContentResolver();
+                updateAnimationScales(resolver);
 
-            resolver.registerContentObserver(
-                    Settings.Global.getUriFor(Settings.Global.WINDOW_ANIMATION_SCALE),
-                    true, contentObserver
-            );
-            resolver.registerContentObserver(
-                    Settings.Global.getUriFor(Settings.Global.TRANSITION_ANIMATION_SCALE),
-                    true, contentObserver
-            );
-            resolver.registerContentObserver(
-                    Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE),
-                    true, contentObserver
-            );
+                contentObserver = new ContentObserver(new Handler(Looper.getMainLooper())) {
+                    @Override
+                    public void onChange(boolean selfChange) {
+                        onChange(selfChange, null);
+                    }
+
+                    @Override
+                    public void onChange(boolean selfChange, @Nullable Uri uri) {
+                        updateAnimationScales(resolver);
+                    }
+                };
+
+                resolver.registerContentObserver(
+                        Settings.Global.getUriFor(Settings.Global.WINDOW_ANIMATION_SCALE),
+                        true, contentObserver
+                );
+                resolver.registerContentObserver(
+                        Settings.Global.getUriFor(Settings.Global.TRANSITION_ANIMATION_SCALE),
+                        true, contentObserver
+                );
+                resolver.registerContentObserver(
+                        Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE),
+                        true, contentObserver
+                );
+            }
         }
     }
 
+    private static void updateAnimationScales(ContentResolver resolver) {
+        WINDOW_ANIMATION_SCALE.updateObject(Settings.Global.getFloat(
+                resolver, Settings.Global.WINDOW_ANIMATION_SCALE,
+                1.0f
+        ));
+        TRANSITION_ANIMATION_SCALE.updateObject(Settings.Global.getFloat(
+                resolver, Settings.Global.TRANSITION_ANIMATION_SCALE,
+                1.0f
+        ));
+        ANIMATOR_DURATION_SCALE.updateObject(Settings.Global.getFloat(
+                resolver, Settings.Global.ANIMATOR_DURATION_SCALE,
+                1.0f
+        ));
+    }
+
     public static void unregisterContentObservers(Context context) {
-        if (contentObserver != null && context != null) {
-            try {
-                context.getApplicationContext().getContentResolver().unregisterContentObserver(contentObserver);
-            } catch (Exception ignored) {
+        if (context == null) {
+            return;
+        }
+
+        synchronized (OBSERVER_LOCK) {
+            OBSERVER_CONTEXTS.remove(unwrapObserverContext(context));
+
+            if (contentObserver != null && OBSERVER_CONTEXTS.isEmpty()) {
+                Context appContext = context.getApplicationContext();
+                if (appContext == null) {
+                    appContext = context;
+                }
+
+                try {
+                    appContext.getContentResolver().unregisterContentObserver(contentObserver);
+                } catch (Exception ignored) {
+                }
+                contentObserver = null;
             }
-            contentObserver = null;
         }
     }
 

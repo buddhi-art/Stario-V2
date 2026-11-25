@@ -24,6 +24,7 @@ import android.content.pm.LauncherApps;
 import android.net.ConnectivityManager;
 import android.net.NetworkInfo;
 import android.os.Build;
+import android.os.LocaleList;
 import android.os.UserHandle;
 import android.os.UserManager;
 import android.text.TextUtils;
@@ -42,6 +43,7 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
@@ -65,8 +67,10 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 public class Utils {
     public static final String USER_AGENT = "Mozilla/5.0 (Linux; Android 6.0.1; Nexus 5X Build/MMB29P) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/W.X.Y.Z Mobile Safari/537.36 (compatible; Googlebot/2.1; +https://www.google.com/bot.html)";
+    public static final String APP_USER_AGENT = "Stario/" + BuildConfig.VERSION_NAME + " (" + BuildConfig.APPLICATION_ID + ")";
 
     private static final String TAG = "com.stario.Utils";
+    private static final int IP_LOOKUP_TIMEOUT = 5_000;
     private static final int CPU_COUNT = Runtime.getRuntime().availableProcessors();
     private static final int POOL_SIZE = Math.max(2, Math.min(4, CPU_COUNT));
     private static final ExecutorService executorPool = createExecutorPool();
@@ -112,8 +116,9 @@ public class Utils {
             "LR", // Liberia
             "PR"  // Puerto Rico
     ));
-    private static DateParser dateParser;
-    private static Gson gson;
+    private static final ThreadLocal<DateParser> DATE_PARSER =
+            ThreadLocal.withInitial(() -> DateParser.newBuilder().build());
+    private static volatile Gson gson;
 
     public static Future<?> submitTask(Runnable runnable) {
         return executorPool.submit(runnable);
@@ -132,19 +137,22 @@ public class Utils {
     }
 
     public static Date parseDate(String date) {
-        if (dateParser == null) {
-            dateParser = DateParser.newBuilder().build();
-        }
-
-        return dateParser.parseDate(date);
+        return DATE_PARSER.get().parseDate(date);
     }
 
     public static @NonNull Gson getGsonInstance() {
-        if (gson == null) {
-            gson = new Gson();
+        Gson instance = gson;
+        if (instance == null) {
+            synchronized (Utils.class) {
+                instance = gson;
+                if (instance == null) {
+                    instance = new Gson();
+                    gson = instance;
+                }
+            }
         }
 
-        return gson;
+        return instance;
     }
 
     public static boolean isSystemUsingImperial(Context context) {
@@ -152,8 +160,9 @@ public class Utils {
             return false;
         }
 
-        Locale locale = context.getResources()
-                .getConfiguration().getLocales().get(0);
+        LocaleList locales = context.getResources()
+                .getConfiguration().getLocales();
+        Locale locale = !locales.isEmpty() ? locales.get(0) : Locale.getDefault();
         String countryCode = locale.getCountry();
 
         return IMPERIAL_COUNTRIES.contains(countryCode);
@@ -181,6 +190,10 @@ public class Utils {
     }
 
     public static LauncherActivityInfo getMainActivity(LauncherApps launcherApps, String packageName, UserHandle handle) {
+        if (launcherApps == null || packageName == null || handle == null) {
+            return null;
+        }
+
         List<LauncherActivityInfo> activityInfoList = launcherApps.getActivityList(packageName, handle);
 
         if (!activityInfoList.isEmpty()) {
@@ -191,6 +204,10 @@ public class Utils {
     }
 
     public static LauncherActivityInfo getMainActivity(Context context, String packageName, UserHandle handle) {
+        if (context == null) {
+            return null;
+        }
+
         return getMainActivity(context.getSystemService(LauncherApps.class), packageName, handle);
     }
 
@@ -199,7 +216,12 @@ public class Utils {
     }
 
     public static boolean isProfileAvailable(Context context, UserHandle handle) {
-        return context.getSystemService(UserManager.class).isUserUnlocked(handle);
+        if (context == null || handle == null) {
+            return false;
+        }
+
+        UserManager userManager = context.getSystemService(UserManager.class);
+        return userManager != null && userManager.isUserUnlocked(handle);
     }
 
     public static boolean isNetworkAvailable(Context context) {
@@ -212,14 +234,31 @@ public class Utils {
 
     public static String getPublicIPAddress() {
         for (String api : IPV4_APIS) {
+            HttpURLConnection connection = null;
             try {
-                BufferedReader reader = new BufferedReader(
-                        new InputStreamReader(new URL(api).openStream(),
-                                StandardCharsets.UTF_8));
+                connection = (HttpURLConnection) new URL(api).openConnection();
+                connection.setConnectTimeout(IP_LOOKUP_TIMEOUT);
+                connection.setReadTimeout(IP_LOOKUP_TIMEOUT);
+                connection.setRequestMethod("GET");
+                connection.addRequestProperty("User-Agent", APP_USER_AGENT);
 
-                return reader.readLine();
+                int responseCode = connection.getResponseCode();
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    try (BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(connection.getInputStream(),
+                                    StandardCharsets.UTF_8))) {
+                        String line = reader.readLine();
+                        if (line != null && !line.isBlank()) {
+                            return line.trim();
+                        }
+                    }
+                }
             } catch (Exception exception) {
                 Log.e(TAG, "getPublicIPAddress: ", exception);
+            } finally {
+                if (connection != null) {
+                    connection.disconnect();
+                }
             }
         }
 

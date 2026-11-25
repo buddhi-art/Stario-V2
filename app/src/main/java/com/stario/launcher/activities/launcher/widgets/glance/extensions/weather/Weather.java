@@ -29,7 +29,6 @@ import android.location.LocationManager;
 import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
-import android.webkit.WebSettings;
 import android.widget.ImageView;
 import android.widget.TextView;
 
@@ -57,6 +56,7 @@ import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
 
+import java.io.InputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
@@ -344,12 +344,14 @@ public class Weather extends GlanceDialogExtension {
 
     private final BroadcastReceiver receiver;
     private final WeatherPreview preview;
+    private final List<Data> weatherData;
 
+    private DefaultLifecycleObserver lifecycleObserver;
     private SharedPreferences weatherPreferences;
     private GeocoderFallback geocoder;
     private volatile Address address;
     private volatile long lastUpdate;
-    private List<Data> weatherData;
+    private boolean receiverRegistered;
     private Future<?> runningTask;
     private RecyclerView recycler;
     private TextView temperature;
@@ -426,33 +428,61 @@ public class Weather extends GlanceDialogExtension {
     public void onAttach(@NonNull Context context) {
         super.onAttach(context);
 
-        activity.getLifecycle()
-                .addObserver(new DefaultLifecycleObserver() {
-                    @Override
-                    public void onResume(@NonNull LifecycleOwner owner) {
-                        int index = getFirstIndexInTime();
+        Stario stario = activity.getApplicationContext();
+        weatherPreferences = stario.getSharedPreferences(Entry.WEATHER);
+        if (geocoder == null) {
+            geocoder = new GeocoderFallback(activity);
+        }
 
-                        if (index > 0) {
-                            preview.update(weatherData.get(index));
-                        }
-                    }
-                });
+        if (lifecycleObserver != null) {
+            activity.getLifecycle().removeObserver(lifecycleObserver);
+        }
+        lifecycleObserver = new DefaultLifecycleObserver() {
+            @Override
+            public void onResume(@NonNull LifecycleOwner owner) {
+                int index = getFirstIndexInTime();
 
-        //noinspection deprecation
-        LocalBroadcastManager.getInstance(activity).registerReceiver(receiver,
-                new IntentFilter(ACTION_REQUEST_UPDATE));
+                if (index >= 0 && index < weatherData.size()) {
+                    preview.update(weatherData.get(index));
+                }
+            }
+        };
+        activity.getLifecycle().addObserver(lifecycleObserver);
+
+        if (!receiverRegistered) {
+            //noinspection deprecation
+            LocalBroadcastManager.getInstance(activity).registerReceiver(receiver,
+                    new IntentFilter(ACTION_REQUEST_UPDATE));
+            receiverRegistered = true;
+        }
     }
 
     @Override
     public void onDetach() {
-        super.onDetach();
+        if (activity != null) {
+            if (lifecycleObserver != null) {
+                activity.getLifecycle().removeObserver(lifecycleObserver);
+                lifecycleObserver = null;
+            }
 
-        try {
-            //noinspection deprecation
-            LocalBroadcastManager.getInstance(activity).unregisterReceiver(receiver);
-        } catch (Exception exception) {
-            Log.e(TAG, "onDetach: Receiver not registered.");
+            if (receiverRegistered) {
+                try {
+                    //noinspection deprecation
+                    LocalBroadcastManager.getInstance(activity).unregisterReceiver(receiver);
+                } catch (Exception exception) {
+                    Log.e(TAG, "onDetach: Receiver not registered.");
+                }
+                receiverRegistered = false;
+            }
         }
+
+        synchronized (this) {
+            if (runningTask != null && !runningTask.isDone()) {
+                runningTask.cancel(true);
+            }
+        }
+
+        super.onDetach();
     }
 
     @Override
@@ -467,14 +497,25 @@ public class Weather extends GlanceDialogExtension {
         container.setAlpha(fraction);
     }
 
-    public HashMap<String, Object> data = new HashMap<>();
-
     @Override
     public synchronized void update() {
+        if (activity == null) {
+            return;
+        }
+
+        if (weatherPreferences == null) {
+            weatherPreferences = activity.getApplicationContext().getSharedPreferences(Entry.WEATHER);
+        }
+        if (geocoder == null) {
+            geocoder = new GeocoderFallback(activity);
+        }
+
         if (!weatherPreferences.getBoolean(FORECAST_KEY, true) ||
                 (runningTask != null && !runningTask.isDone())) {
             return;
         }
+
+        final Context appContext = activity.getApplicationContext();
 
         runningTask = Utils.submitTask(() -> {
             if (Math.abs(System.currentTimeMillis() - lastUpdate) > DEFAULT_UPDATE_INTERVAL) {
@@ -482,12 +523,13 @@ public class Weather extends GlanceDialogExtension {
                 boolean fetchedPreciseLocation = false;
 
                 if (prefersPreciseLocation) {
-                    if (activity.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+                    if (appContext.checkSelfPermission(android.Manifest.permission.ACCESS_COARSE_LOCATION)
                             == PackageManager.PERMISSION_GRANTED) {
                         LocationManager locationManager = (LocationManager)
-                                activity.getSystemService(Context.LOCATION_SERVICE);
-                        android.location.Location location =
-                                locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER);
+                                appContext.getSystemService(Context.LOCATION_SERVICE);
+                        android.location.Location location = locationManager != null
+                                ? locationManager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                                : null;
 
                         if (location != null) {
                             lat = location.getLatitude();
@@ -510,19 +552,20 @@ public class Weather extends GlanceDialogExtension {
                     }
                 }
 
-                if (lat < -90 || lat > 90 ||
+                if (!Double.isFinite(lat) || !Double.isFinite(lon) ||
+                        lat < -90 || lat > 90 ||
                         lon < -180 || lon > 180) {
                     return;
                 }
 
-                JSONObject weatherData = getWeatherInfo();
+                JSONObject weatherJson = getWeatherInfo();
 
-                if (weatherData == null) {
+                if (weatherJson == null) {
                     return;
                 }
 
                 try {
-                    JSONObject properties = weatherData.getJSONObject("properties");
+                    JSONObject properties = weatherJson.getJSONObject("properties");
                     JSONArray timeSeries = properties.getJSONArray("timeseries");
 
                     ArrayList<Data> entries = new ArrayList<>();
@@ -555,13 +598,19 @@ public class Weather extends GlanceDialogExtension {
                     }
 
                     if (!entries.isEmpty()) {
-                        this.weatherData = entries;
+                        synchronized (this.weatherData) {
+                            this.weatherData.clear();
+                            this.weatherData.addAll(entries);
+                        }
                     }
 
                     int index = getFirstIndexInTime();
 
-                    if (index > 0) {
-                        UiUtils.post(() -> preview.update(this.weatherData.get(index)));
+                    if (index >= 0) {
+                        Data current = index < this.weatherData.size() ? this.weatherData.get(index) : null;
+                        if (current != null) {
+                            UiUtils.post(() -> preview.update(current));
+                        }
                     }
 
                     String addressName = weatherPreferences.getString(LOCATION_NAME, null);
@@ -574,7 +623,7 @@ public class Weather extends GlanceDialogExtension {
 
                     // Artificially change the update interval if we want precise location data
                     // But location is not accessible
-                    if(!fetchedPreciseLocation && prefersPreciseLocation) {
+                    if (!fetchedPreciseLocation && prefersPreciseLocation) {
                         lastUpdate = System.currentTimeMillis() - DEFAULT_UPDATE_INTERVAL + FALLBACK_UPDATE_INTERVAL;
                     } else {
                         lastUpdate = System.currentTimeMillis();
@@ -588,9 +637,13 @@ public class Weather extends GlanceDialogExtension {
 
     @SuppressLint("SetTextI18n")
     private void updateData() {
+        if (activity == null || weatherPreferences == null || icon == null) {
+            return;
+        }
+
         int index = getFirstIndexInTime();
 
-        if (index > 0) {
+        if (index >= 0 && index < weatherData.size()) {
             Data data = weatherData.get(index);
 
             icon.setImageResource(getIcon(data.iconCode));
@@ -675,7 +728,8 @@ public class Weather extends GlanceDialogExtension {
         }
 
         Integer icon;
-        if (sunrise.getTimeInMillis() < calendar.getTimeInMillis() &&
+        if (sunrise != null && sunset != null &&
+                sunrise.getTimeInMillis() < calendar.getTimeInMillis() &&
                 calendar.getTimeInMillis() < sunset.getTimeInMillis()) {
             icon = dataForCode.getOrDefault(DAY, R.drawable.unavailable);
         } else {
@@ -699,26 +753,39 @@ public class Weather extends GlanceDialogExtension {
     }
 
     private void loadApproximatedLocation(String ip) {
+        if (ip == null || ip.isBlank()) {
+            return;
+        }
+
+        String trimmedIp = ip.trim();
+
         for (IpApiEntry entry : LOCATION_APIS) {
             HttpURLConnection connection = null;
 
             try {
                 connection = (HttpURLConnection)
-                        (new URL(entry.api.replace(LOCATION_API_IP_WILDCARD, ip)).openConnection());
+                        (new URL(entry.api.replace(LOCATION_API_IP_WILDCARD, trimmedIp)).openConnection());
 
                 connection.setReadTimeout(REQUEST_TIMEOUT);
                 connection.setConnectTimeout(REQUEST_TIMEOUT);
                 connection.setRequestMethod("GET");
-                connection.addRequestProperty("User-Agent", WebSettings.getDefaultUserAgent(activity));
+                connection.addRequestProperty("User-Agent", Utils.APP_USER_AGENT);
                 connection.addRequestProperty("Content-type", "application/json");
 
                 connection.connect();
 
                 int responseCode = connection.getResponseCode();
                 if (responseCode == HttpURLConnection.HTTP_OK) {
-                    JSONObject jsonObject = new JSONObject(Utils.readStream(connection.getInputStream()));
-                    for (IpApiEntry.Callback callback : entry.callback) {
-                        callback.assign(jsonObject.getDouble(callback.field));
+                    try (InputStream inputStream = connection.getInputStream()) {
+                        JSONObject jsonObject = new JSONObject(Utils.readStream(inputStream));
+                        double[] parsedValues = new double[entry.callback.length];
+                        for (int i = 0; i < entry.callback.length; i++) {
+                            parsedValues[i] = jsonObject.getDouble(entry.callback[i].field);
+                        }
+                        for (int i = 0; i < entry.callback.length; i++) {
+                            entry.callback[i].assign(parsedValues[i]);
+                        }
+                        return;
                     }
                 } else {
                     Log.w(TAG, "getWeatherInfo: Server returned non-OK status: " + responseCode);
@@ -744,14 +811,16 @@ public class Weather extends GlanceDialogExtension {
             connection.setReadTimeout(REQUEST_TIMEOUT);
             connection.setConnectTimeout(REQUEST_TIMEOUT);
             connection.setRequestMethod("GET");
-            connection.addRequestProperty("User-Agent", WebSettings.getDefaultUserAgent(activity));
+            connection.addRequestProperty("User-Agent", Utils.APP_USER_AGENT);
             connection.setRequestProperty("Content-type", "application/json");
 
             connection.connect();
 
             int responseCode = connection.getResponseCode();
             if (responseCode == HttpURLConnection.HTTP_OK) {
-                return new JSONObject(Utils.readStream(connection.getInputStream()));
+                try (InputStream inputStream = connection.getInputStream()) {
+                    return new JSONObject(Utils.readStream(inputStream));
+                }
             } else {
                 Log.w(TAG, "getWeatherInfo: Server returned non-OK status: " + responseCode);
             }
