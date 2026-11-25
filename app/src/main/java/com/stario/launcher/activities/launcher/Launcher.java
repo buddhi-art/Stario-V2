@@ -273,7 +273,12 @@ public class Launcher extends ThemedActivity {
                                             .getBoolean(LockDetector.LEGACY_ANIMATION, false);
                                     if (!legacy) {
                                         main.closeTo(event.getRawX(), event.getRawY(),
-                                                () -> RootManager.getInstance(Launcher.this).lockScreenAsync(null));
+                                                () -> RootManager.getInstance(Launcher.this).lockScreenAsync(ok -> {
+                                                    if (!ok && !isDestroyed()) {
+                                                        main.reset();
+                                                        main.invalidate();
+                                                    }
+                                                }));
                                     } else {
                                         RootManager.getInstance(Launcher.this).lockScreenAsync(null);
                                     }

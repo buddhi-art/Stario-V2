@@ -52,6 +52,7 @@ import java.util.WeakHashMap;
 public class AppTransitionManager {
     private static final String TAG = "AppTransitionManager";
     private static final long RETURN_TIMEOUT_MS = 60_000L; // 60 seconds
+    private static final long REMOTE_RETURN_GRACE_MS = 5_000L; // Grace window for async Binder return callback
 
     private static final AppTransitionManager INSTANCE = new AppTransitionManager();
 
@@ -62,6 +63,11 @@ public class AppTransitionManager {
     private String lastLaunchedTransitionName;
     private Rect lastLaunchedBounds;
     private WeakReference<View> lastLaunchedViewRef;
+    private ComponentName recentReturnComponent;
+    private String recentReturnTransitionName;
+    private Rect recentReturnBounds;
+    private WeakReference<View> recentReturnViewRef;
+    private long recentReturnTimeMs;
     private WeakReference<ViewGroup> homeContainerRef;
     private long lastLaunchTimeMs;
     private boolean pendingReturnFromHome;
@@ -153,6 +159,7 @@ public class AppTransitionManager {
         lastLaunchedViewRef = sourceView != null ? new WeakReference<>(sourceView) : null;
         lastLaunchTimeMs = SystemClock.elapsedRealtime();
         pendingReturnFromHome = false;
+        clearRecentReturn();
 
         if (outSourceBounds != null && outSourceBounds.length > 0) {
             outSourceBounds[0] = bounds;
@@ -202,7 +209,7 @@ public class AppTransitionManager {
                         @Override
                         public Rect resolveReturnBounds(ComponentName closingComponent, Rect screenFallback) {
                             ViewGroup container = homeContainerRef != null ? homeContainerRef.get() : null;
-                            View target = resolveReturnTargetView(launcher, container, closingComponent);
+                            View target = resolveReturnTargetView(launcher, container, closingComponent, true);
                             if (target != null && target != container) {
                                 Rect r = extractScreenBounds(target);
                                 if (r != null) {
@@ -211,6 +218,9 @@ public class AppTransitionManager {
                             }
                             if (lastLaunchedBounds != null && lastLaunchedBounds.width() > 0) {
                                 return new Rect(lastLaunchedBounds);
+                            }
+                            if (hasValidRecentReturn() && recentReturnBounds != null && recentReturnBounds.width() > 0) {
+                                return new Rect(recentReturnBounds);
                             }
                             if (screenFallback != null) {
                                 int iconSize = AdaptiveIconView.getMaxIconSize();
@@ -224,7 +234,10 @@ public class AppTransitionManager {
 
                         @Override
                         public ComponentName getLastLaunchedComponent() {
-                            return lastLaunchedComponent;
+                            if (lastLaunchedComponent != null) {
+                                return lastLaunchedComponent;
+                            }
+                            return hasValidRecentReturn() ? recentReturnComponent : null;
                         }
                     },
                     createWallpaperSyncListener(launcher)
@@ -262,14 +275,23 @@ public class AppTransitionManager {
         long now = SystemClock.elapsedRealtime();
         boolean isRecentLaunch = lastLaunchTimeMs > 0 && (now - lastLaunchTimeMs) < RETURN_TIMEOUT_MS;
 
+        // Preserve launch metadata briefly for async RemoteTransitionHelper return callbacks
+        if (isRecentLaunch) {
+            recentReturnComponent = lastLaunchedComponent;
+            recentReturnTransitionName = lastLaunchedTransitionName;
+            recentReturnBounds = lastLaunchedBounds != null ? new Rect(lastLaunchedBounds) : null;
+            recentReturnViewRef = lastLaunchedViewRef;
+            recentReturnTimeMs = now;
+        }
+
         // Smoothly restore wallpaper zoom
         WallpaperAnimator.updateZoom(launcher, 0.0f);
 
-        if (isRecentLaunch) {
+        if (isRecentLaunch && !isRemoteReturnAnimating()) {
             ViewGroup container = homeContainer != null
                     ? homeContainer
                     : (homeContainerRef != null ? homeContainerRef.get() : null);
-            View targetView = resolveReturnTargetView(launcher, container, lastLaunchedComponent);
+            View targetView = resolveReturnTargetView(launcher, container, lastLaunchedComponent, false);
 
             if (targetView != null) {
                 if (targetView == container) {
@@ -295,16 +317,33 @@ public class AppTransitionManager {
         pendingReturnFromHome = false;
     }
 
+    private void clearRecentReturn() {
+        recentReturnViewRef = null;
+        recentReturnComponent = null;
+        recentReturnTransitionName = null;
+        recentReturnBounds = null;
+        recentReturnTimeMs = 0L;
+    }
+
+    private boolean hasValidRecentReturn() {
+        return recentReturnTimeMs > 0L
+                && (SystemClock.elapsedRealtime() - recentReturnTimeMs) < REMOTE_RETURN_GRACE_MS;
+    }
+
     @Nullable
     private View resolveReturnTargetView(@NonNull Launcher launcher,
                                          @Nullable ViewGroup homeContainer,
-                                         @Nullable ComponentName component) {
+                                         @Nullable ComponentName component,
+                                         boolean allowRecentFallback) {
         Window launcherWindow = launcher.getWindow();
         IBinder launcherToken = launcherWindow != null ? launcherWindow.getDecorView().getWindowToken() : null;
 
         // 1. Direct source view if still visible inside the Launcher window (e.g., pinned icon, Clock, Calendar)
-        if (lastLaunchedViewRef != null) {
-            View cached = lastLaunchedViewRef.get();
+        WeakReference<View> viewRef = lastLaunchedViewRef != null
+                ? lastLaunchedViewRef
+                : (allowRecentFallback && hasValidRecentReturn() ? recentReturnViewRef : null);
+        if (viewRef != null) {
+            View cached = viewRef.get();
             if (cached != null && cached.isAttachedToWindow() && cached.isShown()
                     && (launcherToken == null || cached.getWindowToken() == launcherToken)) {
                 return cached;
@@ -313,8 +352,13 @@ public class AppTransitionManager {
 
         // 2. If launched from Drawer / Search / Folder, try resolving a matching pinned icon on home screen
         if (homeContainer != null && homeContainer.isAttachedToWindow()) {
-            String targetTransition = lastLaunchedTransitionName;
-            String pkgPrefix = component != null ? component.getPackageName() : null;
+            String targetTransition = lastLaunchedTransitionName != null
+                    ? lastLaunchedTransitionName
+                    : (allowRecentFallback && hasValidRecentReturn() ? recentReturnTransitionName : null);
+            ComponentName effectiveComp = component != null
+                    ? component
+                    : (allowRecentFallback && hasValidRecentReturn() ? recentReturnComponent : null);
+            String pkgPrefix = effectiveComp != null ? effectiveComp.getPackageName() : null;
             if (targetTransition != null || pkgPrefix != null) {
                 View pinnedMatch = findMatchingIconInHierarchy(
                         homeContainer, launcherToken, targetTransition, pkgPrefix);
@@ -474,6 +518,17 @@ public class AppTransitionManager {
             @Override
             public void onTransitionEnd(boolean isOpening) {
                 WallpaperAnimator.updateZoom(activity, isOpening ? 1.0f : 0.0f);
+                if (!isOpening && activity instanceof Launcher && hasValidRecentReturn()) {
+                    Launcher launcher = (Launcher) activity;
+                    ViewGroup container = homeContainerRef != null ? homeContainerRef.get() : null;
+                    View target = resolveReturnTargetView(launcher, container, recentReturnComponent, true);
+                    if (target != null && target != container) {
+                        playLandmarkReturnAnimation(target);
+                    } else if (container != null && container.isAttachedToWindow()) {
+                        playHomeContainerSettle(container);
+                    }
+                    clearRecentReturn();
+                }
             }
         };
     }

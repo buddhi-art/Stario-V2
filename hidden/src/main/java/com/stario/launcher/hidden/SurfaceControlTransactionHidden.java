@@ -24,6 +24,10 @@ import dev.rikka.tools.refine.RefineAs;
 
 @RefineAs(SurfaceControl.Transaction.class)
 public class SurfaceControlTransactionHidden {
+    public SurfaceControlTransactionHidden setPosition(SurfaceControl sc, float x, float y) {
+        throw new RuntimeException("Stub!");
+    }
+
     public SurfaceControlTransactionHidden setCornerRadius(SurfaceControl sc, float cornerRadius) {
         throw new RuntimeException("Stub!");
     }

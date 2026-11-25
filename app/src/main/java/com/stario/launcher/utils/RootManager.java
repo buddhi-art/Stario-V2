@@ -395,6 +395,20 @@ public final class RootManager {
             cmd.append("cp -f ").append(stagedXml).append(" ").append(quotedXmlTarget).append(" && ");
             cmd.append("cp -f ").append(quotedApk).append(" ").append(targetApk).append(" && ");
 
+            // Copy split APKs if installed as App Bundle splits
+            if (appInfo.splitSourceDirs != null) {
+                for (String splitPath : appInfo.splitSourceDirs) {
+                    if (splitPath != null && splitPath.endsWith(".apk")) {
+                        String splitName = new File(splitPath).getName();
+                        if (SAFE_PACKAGE_PATTERN.matcher(splitName).matches()) {
+                            String splitTarget = quoteShellArg(MODULE_DIR + "/system/priv-app/Stario/" + splitName);
+                            cmd.append("cp -f ").append(quoteShellArg(splitPath)).append(" ").append(splitTarget)
+                                    .append(" && chmod 0644 ").append(splitTarget).append(" && ");
+                        }
+                    }
+                }
+            }
+
             // Copy native libraries if present
             if (appInfo.nativeLibraryDir != null) {
                 File nativeDir = new File(appInfo.nativeLibraryDir);

@@ -76,10 +76,14 @@ public final class RemoteTransitionHelper {
 
     private static final Handler MAIN_HANDLER = new Handler(Looper.getMainLooper());
 
+    private static final int PRIMARY_LAYER = 100;
+    private static final int SECONDARY_LAYER = 50;
+
     private static boolean surfaceHiddenChecked = false;
     private static Method txSetCornerRadiusMethod;
     private static Method txSetWindowCropMethod;
     private static Method txSetMatrixMethod;
+    private static Method txSetPositionMethod;
 
     private static volatile ActiveSurfaceAnimator activeAnimator;
 
@@ -169,9 +173,12 @@ public final class RemoteTransitionHelper {
                     getWindowManagerIntConst("TRANSIT_WALLPAPER_OPEN", 13));
             int taskToFront = getWindowManagerIntConst("TRANSIT_OLD_TASK_TO_FRONT",
                     getWindowManagerIntConst("TRANSIT_TASK_TO_FRONT", 10));
+            int taskClose = getWindowManagerIntConst("TRANSIT_OLD_TASK_CLOSE",
+                    getWindowManagerIntConst("TRANSIT_TASK_CLOSE", 9));
 
             invokeAddRemoteAnimation(addMethod, definition, wallpaperOpen, returnAdapter);
             invokeAddRemoteAnimation(addMethod, definition, taskToFront, returnAdapter);
+            invokeAddRemoteAnimation(addMethod, definition, taskClose, returnAdapter);
 
             Method registerMethod = Activity.class.getMethod("registerRemoteAnimations", definitionClass);
             registerMethod.invoke(activity, definition);
@@ -724,7 +731,7 @@ public final class RemoteTransitionHelper {
         float posX = (iconBounds.left - rootOffset.x) + ((fullBounds.left - rootOffset.x) - (iconBounds.left - rootOffset.x)) * t;
         float posY = (iconBounds.top - rootOffset.y) + ((fullBounds.top - rootOffset.y) - (iconBounds.top - rootOffset.y)) * t - (cropTop * scale);
 
-        tx.setPosition(leash, posX, posY);
+        applyPosition(tx, leash, posX, posY);
         applyMatrix(tx, leash, scale, scale);
         applyWindowCrop(tx, leash, new Rect(0, cropTop, fullW, cropTop + cropH));
 
@@ -737,11 +744,22 @@ public final class RemoteTransitionHelper {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             tx.setVisibility(leash, true);
         }
-        tx.setLayer(leash, isOpeningLayer());
+        tx.setLayer(leash, PRIMARY_LAYER);
     }
 
-    private static int isOpeningLayer() {
-        return 100;
+    private static void applyPosition(SurfaceControl.Transaction tx, SurfaceControl leash, float x, float y) {
+        ensureSurfaceHiddenMethods();
+        if (txSetPositionMethod != null) {
+            try {
+                txSetPositionMethod.invoke(tx, leash, x, y);
+                return;
+            } catch (Throwable ignored) {
+                txSetPositionMethod = null;
+            }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            tx.setPosition(leash, x, y);
+        }
     }
 
     private static void applyMatrix(SurfaceControl.Transaction tx, SurfaceControl leash, float sx, float sy) {
@@ -754,7 +772,7 @@ public final class RemoteTransitionHelper {
                 txSetMatrixMethod = null;
             }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             tx.setScale(leash, sx, sy);
         }
     }
@@ -769,7 +787,7 @@ public final class RemoteTransitionHelper {
                 txSetWindowCropMethod = null;
             }
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             tx.setCrop(leash, crop);
         }
     }
@@ -790,6 +808,11 @@ public final class RemoteTransitionHelper {
             return;
         }
         surfaceHiddenChecked = true;
+        try {
+            txSetPositionMethod = SurfaceControl.Transaction.class.getMethod(
+                    "setPosition", SurfaceControl.class, float.class, float.class);
+        } catch (Throwable ignored) {
+        }
         try {
             txSetCornerRadiusMethod = SurfaceControl.Transaction.class.getMethod(
                     "setCornerRadius", SurfaceControl.class, float.class);
@@ -923,8 +946,9 @@ public final class RemoteTransitionHelper {
                     int bh = secondaryBounds.height();
                     float txPos = (secondaryBounds.left - rootOffset.x) + bw * (1f - bgScale) * 0.5f;
                     float tyPos = (secondaryBounds.top - rootOffset.y) + bh * (1f - bgScale) * 0.5f;
-                    tx.setPosition(secondaryLeash, txPos, tyPos);
+                    applyPosition(tx, secondaryLeash, txPos, tyPos);
                     applyMatrix(tx, secondaryLeash, bgScale, bgScale);
+                    tx.setLayer(secondaryLeash, SECONDARY_LAYER);
                     tx.setAlpha(secondaryLeash, Math.max(0f, Math.min(1f, bgAlpha)));
                 }
                 tx.apply();
@@ -951,7 +975,7 @@ public final class RemoteTransitionHelper {
             try (SurfaceControl.Transaction tx = new SurfaceControl.Transaction()) {
                 if (primaryLeash != null && primaryLeash.isValid()) {
                     if (isOpening) {
-                        tx.setPosition(primaryLeash,
+                        applyPosition(tx, primaryLeash,
                                 fullBounds.left - rootOffset.x,
                                 fullBounds.top - rootOffset.y);
                         applyMatrix(tx, primaryLeash, 1f, 1f);
@@ -963,7 +987,7 @@ public final class RemoteTransitionHelper {
                     }
                 }
                 if (secondaryLeash != null && secondaryLeash.isValid() && secondaryBounds != null) {
-                    tx.setPosition(secondaryLeash,
+                    applyPosition(tx, secondaryLeash,
                             secondaryBounds.left - rootOffset.x,
                             secondaryBounds.top - rootOffset.y);
                     applyMatrix(tx, secondaryLeash, 1f, 1f);

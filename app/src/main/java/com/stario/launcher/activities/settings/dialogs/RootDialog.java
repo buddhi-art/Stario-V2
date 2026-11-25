@@ -269,9 +269,9 @@ public class RootDialog extends ActionDialog {
         }
 
         String providerName = status != null ? formatProvider(status.provider) : "—";
-        providerText.setText(resources.getString(R.string.root_provider_label) + ": " + providerName);
-        permissionText.setText(resources.getString(R.string.root_permission_label) + ": "
-                + resources.getString(privPerm ? R.string.root_granted : R.string.root_not_granted));
+        providerText.setText(resources.getString(R.string.root_provider_format, providerName));
+        permissionText.setText(resources.getString(R.string.root_permission_format,
+                resources.getString(privPerm ? R.string.root_granted : R.string.root_not_granted)));
 
         // Sync switches quietly
         updatingUi = true;
