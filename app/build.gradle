@@ -183,4 +183,7 @@ dependencies {
     implementation 'com.prof18.rssparser:rssparser:6.1.1'
 
     annotationProcessor 'androidx.annotation:annotation:1.9.1'
+
+    testImplementation 'junit:junit:4.13.2'
+    testImplementation 'org.mockito:mockito-core:5.14.2'
 }

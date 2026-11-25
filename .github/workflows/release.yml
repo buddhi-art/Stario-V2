@@ -9,7 +9,7 @@ on:
       tag_name:
         description: 'Tag name for release (e.g. v2.16)'
         required: false
-        default: 'v2.16'
+        default: ''
 
 jobs:
   release:
@@ -31,7 +31,7 @@ jobs:
           java-version: '17'
 
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v5
 
       - name: Make gradlew executable
         run: chmod +x gradlew
@@ -44,54 +44,91 @@ jobs:
           elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
           else
-            TAG="v2.16"
+            VERSION_NAME=$(./gradlew -q :app:getVersionName)
+            TAG="v${VERSION_NAME}"
           fi
-          echo "TAG=$TAG" >> $GITHUB_ENV
-          echo "version=$TAG" >> $GITHUB_OUTPUT
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Run Unit Tests
+        run: ./gradlew testDebugUnitTest --stacktrace
 
       - name: Build Release & Debug APKs
-        run: |
-          ./gradlew assembleRelease assembleDebug --stacktrace
+        run: ./gradlew assembleRelease assembleDebug --stacktrace
 
-      - name: Sign & Prepare Release APK
+      - name: Sign & Prepare Release APKs
+        id: prepare_release
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          BUILD_TOOLS_DIR=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -n 1)
-          echo "Using Android Build Tools at: $BUILD_TOOLS_DIR"
-          
+          set -euo pipefail
+
+          trap 'rm -f release.keystore release_assets/aligned.apk' EXIT
+
           mkdir -p release_assets
-          
-          # 1. Copy Debug APK (already signed with debug keystore)
-          cp app/build/outputs/apk/debug/app-debug.apk release_assets/Stario-${TAG}-debug.apk
-          
-          # 2. Copy Raw Unsigned APK
-          cp app/build/outputs/apk/release/app-release-unsigned.apk release_assets/Stario-${TAG}-unsigned.apk
-          
-          # 3. Create or use keystore for Signed Release APK
-          if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ]; then
-            echo "Using repository secret keystore..."
-            echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 --decode > release.keystore
-            KS_PASS="${{ secrets.KEYSTORE_PASSWORD }}"
-            KEY_ALIAS="${{ secrets.KEY_ALIAS }}"
-            KEY_PASS="${{ secrets.KEY_PASSWORD }}"
+
+          # 1. Copy Debug APK (signed with standard debug keystore)
+          cp app/build/outputs/apk/debug/app-debug.apk "release_assets/Stario-${TAG}-debug.apk"
+
+          # 2. Copy Raw Unsigned Release APK
+          cp app/build/outputs/apk/release/app-release-unsigned.apk "release_assets/Stario-${TAG}-unsigned.apk"
+
+          # 3. Require persistent signing secrets before producing Stario-<TAG>.apk.
+          # Never fall back to an ephemeral keytool-generated keystore, which breaks in-place upgrades.
+          if [ -n "${KEYSTORE_BASE64:-}" ]; then
+            if [ -z "${KEYSTORE_PASSWORD:-}" ] || [ -z "${KEY_ALIAS:-}" ] || [ -z "${KEY_PASSWORD:-}" ]; then
+              echo "::error::KEYSTORE_BASE64 is set, but KEYSTORE_PASSWORD, KEY_ALIAS, or KEY_PASSWORD is missing."
+              exit 1
+            fi
+
+            BUILD_TOOLS_DIR=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -n 1)
+            echo "Using Android Build Tools at: $BUILD_TOOLS_DIR"
+
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > release.keystore
+            chmod 600 release.keystore
+
+            "$BUILD_TOOLS_DIR/zipalign" -v -p 4 \
+              app/build/outputs/apk/release/app-release-unsigned.apk \
+              release_assets/aligned.apk
+
+            "$BUILD_TOOLS_DIR/apksigner" sign \
+              --ks release.keystore \
+              --ks-pass env:KEYSTORE_PASSWORD \
+              --ks-key-alias "$KEY_ALIAS" \
+              --key-pass env:KEY_PASSWORD \
+              --out "release_assets/Stario-${TAG}.apk" \
+              release_assets/aligned.apk
+
+            "$BUILD_TOOLS_DIR/apksigner" verify -v "release_assets/Stario-${TAG}.apk"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Generating self-signed release keystore for GitHub distribution..."
-            keytool -genkeypair -v -keystore release.keystore -alias stario -keyalg RSA -keysize 2048 -validity 10000 \
-              -storepass "stario-release" -keypass "stario-release" \
-              -dname "CN=Stario Launcher, OU=Release, O=Stario, L=Unknown, ST=Unknown, C=US"
-            KS_PASS="stario-release"
-            KEY_ALIAS="stario"
-            KEY_PASS="stario-release"
+            echo "::warning::Repository signing secret KEYSTORE_BASE64 is not configured; skipping signed Stario-${TAG}.apk instead of generating an upgrade-breaking ephemeral keystore."
+            echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
-          
-          # 4. Zipalign & Sign
-          "$BUILD_TOOLS_DIR/zipalign" -v -p 4 app/build/outputs/apk/release/app-release-unsigned.apk release_assets/aligned.apk
-          "$BUILD_TOOLS_DIR/apksigner" sign --ks release.keystore --ks-pass pass:"$KS_PASS" --ks-key-alias "$KEY_ALIAS" --key-pass pass:"$KEY_PASS" \
-            --out "release_assets/Stario-${TAG}.apk" release_assets/aligned.apk
-          rm release_assets/aligned.apk
-          
-          # 5. Verify Signature
-          "$BUILD_TOOLS_DIR/apksigner" verify -v "release_assets/Stario-${TAG}.apk"
-          
+
+          {
+            echo "## Stario ${TAG} Release"
+            echo ""
+            echo "### ✨ What's New & Highlights"
+            echo "* **Fluid Physical Motion**: VSYNC-synchronized \`SpringAnimation\` engines, hyperbolic rubber-banding overscroll, fling velocity handoff, and smooth \`ArcMotion\` trajectories."
+            echo "* **Ultra-Smooth 120Hz & Zero Battery Waste**: Lifecycle-scoped sensor/redraw loops in \`StylizedClockView\`, \`PulsingTextView\`, and \`Media\`, with bounded background thread pools and ViewHolder recycling."
+            echo "* **Stability & Memory Hardening**: Observer lifecycle cleanup in \`Measurements\` & \`ObservableObject\`, TimSort-compliant comparators in \`CategoryMappings\`, and thread-safe app/profile state."
+            echo "* **Icon-Anchored Transitions & Optional Root Mode**: Icon-anchored \`makeScaleUpAnimation\` + Landmark Return Morph, plus optional Root / Privileged Mode in Settings for root screen lock and Magisk/KernelSU/APatch priv-app systemization."
+            echo ""
+            echo "---"
+            echo "### 📦 Download & Installation"
+            if [ -f "release_assets/Stario-${TAG}.apk" ]; then
+              echo "* **\`Stario-${TAG}.apk\`**: Recommended signed release build. Directly installable on Android 10+ (API 29+)."
+            else
+              echo "> **Note:** Signed \`Stario-${TAG}.apk\` was omitted because repository signing secrets (\`KEYSTORE_BASE64\`) are not configured (ephemeral throwaway keystores are disabled to protect in-place upgrades)."
+            fi
+            echo "* **\`Stario-${TAG}-debug.apk\`**: Debug build with debugging symbols enabled."
+            echo "* **\`Stario-${TAG}-unsigned.apk\`**: Pure unsigned release APK for custom signing or verification."
+          } > release_body.md
+
           echo "Listing release assets:"
           ls -lh release_assets/
 
@@ -107,19 +144,6 @@ jobs:
           tag_name: ${{ env.TAG }}
           name: "Stario ${{ env.TAG }}"
           files: release_assets/*
+          body_path: release_body.md
           draft: false
           prerelease: false
-          body: |
-            ## Stario ${{ env.TAG }} Release
-            
-            ### ✨ What's New & Highlights
-            * **Apple-Grade Fluid Physics**: VSYNC-synchronized spring animation physics (`SpringAnimation`), logarithmic rubber-banding overscroll, fling release velocity handoff, and smooth geometric arc motion.
-            * **Ultra-Smooth 120Hz & Zero Battery Waste**: Eradicated infinite background invalidation loops in `StylizedClockView`, `PulsingTextView`, and `Media`, with bounded thread pools and ViewHolder caching.
-            * **Stability & Memory Hardening**: Fixed static observer leaks in `Measurements` & `ObservableObject`, resolved TimSort comparator contracts in `CategoryMappings`, and stabilized concurrent collections.
-            * **Icon-Anchored App Transitions**: Added `ActivityOptions.makeScaleUpAnimation` with icon coordinate bounding and Landmark Return Morph spring return animation.
-            
-            ---
-            ### 📦 Download & Installation
-            * **`Stario-${{ env.TAG }}.apk`**: Recommended signed release build. Directly installable on any Android 10+ device.
-            * **`Stario-${{ env.TAG }}-debug.apk`**: Debug build with debugging symbols enabled.
-            * **`Stario-${{ env.TAG }}-unsigned.apk`**: Pure unsigned APK for custom packagers.
