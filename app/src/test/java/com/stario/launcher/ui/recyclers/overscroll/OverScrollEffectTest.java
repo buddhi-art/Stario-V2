@@ -180,6 +180,7 @@ public class OverScrollEffectTest {
         private static void simulateMoveEvent(OverScrollEffect<?> effect) {
             MotionEvent move = mock(MotionEvent.class);
             when(move.getAction()).thenReturn(MotionEvent.ACTION_MOVE);
+            when(move.getActionMasked()).thenReturn(MotionEvent.ACTION_MOVE);
             when(move.getRawY()).thenReturn(120f);
             effect.onTouchEvent(move);
         }
