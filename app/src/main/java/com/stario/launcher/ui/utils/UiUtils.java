@@ -134,17 +134,29 @@ public class UiUtils {
     }
 
     public static void hideKeyboard(View view) {
+        if (view == null) {
+            return;
+        }
+
         InputMethodManager inputMethodManager =
                 (InputMethodManager) view.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
         view.clearFocus();
-        inputMethodManager.hideSoftInputFromWindow(view.getWindowToken(), 0);
+        if (inputMethodManager != null) {
+            inputMethodManager.hideSoftInputFromWindow(view.getWindowToken(), 0);
+        }
     }
 
     public static void showKeyboard(View view) {
+        if (view == null) {
+            return;
+        }
+
         InputMethodManager inputMethodManager =
                 (InputMethodManager) view.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
         view.requestFocus();
-        inputMethodManager.showSoftInput(view, 0);
+        if (inputMethodManager != null) {
+            inputMethodManager.showSoftInput(view, 0);
+        }
     }
 
     public static void post(Runnable runnable) {
@@ -160,6 +172,10 @@ public class UiUtils {
     }
 
     public static void loopOnUIThread(Runnable runnable, long period, Condition condition) {
+        if (runnable == null || condition == null) {
+            return;
+        }
+
         UIHandler.post(new Runnable() {
             public void run() {
                 if (condition.evaluate()) {
@@ -190,9 +206,9 @@ public class UiUtils {
         view.setOutlineProvider(new ViewOutlineProvider() {
             @Override
             public void getOutline(View view, Outline outline) {
-                outline.setRoundRect(new Rect(0, 0,
-                                view.getMeasuredWidth(),
-                                view.getMeasuredHeight()),
+                outline.setRoundRect(0, 0,
+                        view.getMeasuredWidth(),
+                        view.getMeasuredHeight(),
                         Measurements.dpToPx(radiusDp));
             }
         });
@@ -223,28 +239,38 @@ public class UiUtils {
                 Insets cutoutInsets = compatInset.getInsets(WindowInsetsCompat.Type.displayCutout());
                 Insets navigationInsets = compatInset.getInsets(WindowInsetsCompat.Type.navigationBars());
 
+                if (!(view.getLayoutParams() instanceof ViewGroup.MarginLayoutParams)) {
+                    return compatInset;
+                }
+
                 ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) view.getLayoutParams();
+                int newLeft;
+                int newRight;
 
                 switch (treatment) {
                     case CENTER:
                         int margin = Math.max(cutoutInsets.left + navigationInsets.left,
                                 cutoutInsets.right + navigationInsets.right);
-                        params.leftMargin = margin;
-                        params.rightMargin = margin;
+                        newLeft = margin;
+                        newRight = margin;
                         break;
 
                     case INVERSE:
-                        params.leftMargin = cutoutInsets.right + navigationInsets.right;
-                        params.rightMargin = cutoutInsets.left + navigationInsets.left;
+                        newLeft = cutoutInsets.right + navigationInsets.right;
+                        newRight = cutoutInsets.left + navigationInsets.left;
                         break;
 
                     default: // DEFAULT
-                        params.leftMargin = cutoutInsets.left + navigationInsets.left;
-                        params.rightMargin = cutoutInsets.right + navigationInsets.right;
+                        newLeft = cutoutInsets.left + navigationInsets.left;
+                        newRight = cutoutInsets.right + navigationInsets.right;
                         break;
                 }
 
-                view.setLayoutParams(params);
+                if (params.leftMargin != newLeft || params.rightMargin != newRight) {
+                    params.leftMargin = newLeft;
+                    params.rightMargin = newRight;
+                    view.setLayoutParams(params);
+                }
 
                 if (listener != null) {
                     listener.onApplied();

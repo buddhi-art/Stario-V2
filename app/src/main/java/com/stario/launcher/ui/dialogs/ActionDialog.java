@@ -17,6 +17,7 @@
 
 package com.stario.launcher.ui.dialogs;
 
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.os.Build;
 import android.os.Bundle;
@@ -30,10 +31,10 @@ import android.view.WindowManager;
 import android.widget.OverScroller;
 
 import androidx.annotation.NonNull;
+import androidx.core.util.Consumer;
 import androidx.core.view.WindowCompat;
 import androidx.customview.widget.ViewDragHelper;
 import androidx.lifecycle.DefaultLifecycleObserver;
-import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
 
 import com.google.android.material.bottomsheet.BottomSheetBehavior;
@@ -46,6 +47,7 @@ import com.stario.launcher.ui.utils.HomeWatcher;
 import com.stario.launcher.ui.utils.UiUtils;
 import com.stario.launcher.ui.utils.animation.KeyboardAnimationHelper;
 import com.stario.launcher.utils.Utils;
+import com.stario.launcher.utils.objects.ObservableObject;
 
 import java.lang.reflect.Field;
 import java.util.Objects;
@@ -56,9 +58,14 @@ public abstract class ActionDialog extends BottomSheetDialog {
     protected final ThemedActivity activity;
 
     private final HomeWatcher homeWatcher;
+    private final Consumer<Configuration> configurationChangedListener;
+    private final DefaultLifecycleObserver lifecycleObserver;
 
     private DialogBackgroundDimmingController.DimmingController dimmingController;
     private KeyboardHeightProvider heightProvider;
+    private ObservableObject.OnSet<Integer> navListener;
+    private ObservableObject.OnSet<Integer> statusBarListener;
+    private boolean listenersRegistered;
     private boolean canCollapse;
     private View root;
 
@@ -67,6 +74,7 @@ public abstract class ActionDialog extends BottomSheetDialog {
 
         this.activity = activity;
         this.canCollapse = false;
+        this.listenersRegistered = false;
 
         homeWatcher = new HomeWatcher(activity);
         homeWatcher.setOnHomePressedListener(() -> {
@@ -77,31 +85,19 @@ public abstract class ActionDialog extends BottomSheetDialog {
             UiUtils.hideKeyboard(root);
         });
 
-        activity.addOnConfigurationChangedListener(
-                configuration -> {
-                    if (heightProvider != null) {
-                        heightProvider.dismiss();
-                    }
+        configurationChangedListener = configuration -> dismissWithoutSheetAnimation();
 
-                    dismissWithoutSheetAnimation();
-                });
-
-        Lifecycle lifecycle = activity.getLifecycle();
-        lifecycle.addObserver(new DefaultLifecycleObserver() {
+        lifecycleObserver = new DefaultLifecycleObserver() {
             @Override
             public void onDestroy(@NonNull LifecycleOwner owner) {
-                lifecycle.removeObserver(this);
+                unregisterListeners();
             }
 
             @Override
             public void onPause(@NonNull LifecycleOwner owner) {
-                if (heightProvider != null) {
-                    heightProvider.dismiss();
-                }
-
                 dismissWithoutSheetAnimation();
             }
-        });
+        };
     }
 
     @Override
@@ -135,9 +131,9 @@ public abstract class ActionDialog extends BottomSheetDialog {
             });
         }
 
-        Measurements.addNavListener(value ->
+        navListener = value ->
                 content.setPadding(content.getPaddingLeft(),
-                        content.getPaddingTop(), content.getPaddingRight(), value));
+                        content.getPaddingTop(), content.getPaddingRight(), value);
 
         root.setOnClickListener(view -> dismiss());
         content.setOnClickListener(view -> {});
@@ -145,10 +141,13 @@ public abstract class ActionDialog extends BottomSheetDialog {
         setContentView(root);
 
         ((View) root.getParent()).setBackgroundColor(Color.TRANSPARENT);
-        Measurements.addStatusBarListener(value -> {
+        statusBarListener = value -> {
             ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) root.getLayoutParams();
-            params.topMargin = value;
-        });
+            if (params != null && params.topMargin != value) {
+                params.topMargin = value;
+                root.requestLayout();
+            }
+        };
 
         behavior.addBottomSheetCallback(new BottomSheetBehavior.BottomSheetCallback() {
             @Override
@@ -166,7 +165,7 @@ public abstract class ActionDialog extends BottomSheetDialog {
                     ActionDialog.super.dismiss();
 
                     if (heightProvider != null) {
-                        heightProvider.dismiss();
+                        heightProvider.close();
                     }
 
                     canCollapse = false;
@@ -186,6 +185,47 @@ public abstract class ActionDialog extends BottomSheetDialog {
                 }
             }
         });
+    }
+
+    private void registerListeners() {
+        if (listenersRegistered) {
+            return;
+        }
+        listenersRegistered = true;
+
+        activity.addOnConfigurationChangedListener(configurationChangedListener);
+        activity.getLifecycle().addObserver(lifecycleObserver);
+
+        if (navListener != null) {
+            Measurements.addNavListener(navListener);
+        }
+        if (statusBarListener != null) {
+            Measurements.addStatusBarListener(statusBarListener);
+        }
+    }
+
+    private void unregisterListeners() {
+        if (!listenersRegistered) {
+            return;
+        }
+        listenersRegistered = false;
+
+        activity.removeOnConfigurationChangedListener(configurationChangedListener);
+        activity.getLifecycle().removeObserver(lifecycleObserver);
+
+        if (navListener != null) {
+            Measurements.removeNavListener(navListener);
+        }
+        if (statusBarListener != null) {
+            Measurements.removeStatusBarListener(statusBarListener);
+        }
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+
+        registerListeners();
     }
 
     @Override
@@ -211,54 +251,62 @@ public abstract class ActionDialog extends BottomSheetDialog {
 
         homeWatcher.startWatch();
 
-        root.post(() -> {
-            ViewParent frame = root.getParent();
+        if (root != null) {
+            root.post(() -> {
+                if (!isShowing() || !root.isAttachedToWindow()) {
+                    return;
+                }
 
-            if (frame != null) {
-                fitToBottomInset((View) frame, false);
+                ViewParent frame = root.getParent();
 
-                ViewParent coordinator = frame.getParent();
+                if (frame != null) {
+                    fitToBottomInset((View) frame, false);
 
-                if (coordinator != null) {
-                    fitToBottomInset((View) coordinator, false);
+                    ViewParent coordinator = frame.getParent();
 
-                    ViewParent container = coordinator.getParent();
+                    if (coordinator != null) {
+                        fitToBottomInset((View) coordinator, false);
 
-                    if (container != null) {
-                        fitToBottomInset((View) container, false);
+                        ViewParent container = coordinator.getParent();
+
+                        if (container != null) {
+                            fitToBottomInset((View) container, false);
+                        }
                     }
                 }
-            }
 
-            root.post(() -> {
-                if (window != null) {
-                    window.getDecorView().setVisibility(View.VISIBLE);
+                root.post(() -> {
+                    if (isShowing() && root.isAttachedToWindow() && window != null) {
+                        window.getDecorView().setVisibility(View.VISIBLE);
 
-                    getBehavior().setState(getDesiredInitialState());
-                }
+                        getBehavior().setState(getDesiredInitialState());
+                    }
+                });
             });
-        });
+        }
     }
 
     // hack to remove STATE_EXPANDED fit to system window jitter on layout pass
     @Override
     public void onDetachedFromWindow() {
-        ViewParent frame = root.getParent();
-
         homeWatcher.stopWatch();
 
-        if (frame != null) {
-            fitToBottomInset((View) frame, true);
+        if (root != null) {
+            ViewParent frame = root.getParent();
 
-            ViewParent coordinator = frame.getParent();
+            if (frame != null) {
+                fitToBottomInset((View) frame, true);
 
-            if (coordinator != null) {
-                fitToBottomInset((View) coordinator, true);
+                ViewParent coordinator = frame.getParent();
 
-                ViewParent container = coordinator.getParent();
+                if (coordinator != null) {
+                    fitToBottomInset((View) coordinator, true);
 
-                if (container != null) {
-                    fitToBottomInset((View) container, true);
+                    ViewParent container = coordinator.getParent();
+
+                    if (container != null) {
+                        fitToBottomInset((View) container, true);
+                    }
                 }
             }
         }
@@ -277,9 +325,15 @@ public abstract class ActionDialog extends BottomSheetDialog {
         super.show();
 
         BottomSheetBehavior<?> behavior = getBehavior();
-        behavior.setDraggable(heightProvider.getKeyboardHeight() == 0);
+        behavior.setDraggable(heightProvider == null || heightProvider.getKeyboardHeight() == 0);
 
-        root.post(() -> UiUtils.Notch.applyNotchMargin(root, UiUtils.Notch.Treatment.CENTER));
+        if (root != null) {
+            root.post(() -> {
+                if (isShowing() && root.isAttachedToWindow()) {
+                    UiUtils.Notch.applyNotchMargin(root, UiUtils.Notch.Treatment.CENTER);
+                }
+            });
+        }
 
         if (heightProvider != null) {
             heightProvider.start();
@@ -292,7 +346,17 @@ public abstract class ActionDialog extends BottomSheetDialog {
     }
 
     private void dismissWithoutSheetAnimation() {
-        dismiss();
+        if (!isShowing()) {
+            return;
+        }
+
+        canCollapse = false;
+
+        if (heightProvider != null) {
+            heightProvider.close();
+        }
+
+        UiUtils.hideKeyboard(root);
 
         // skip framework animation
         try {
@@ -305,15 +369,17 @@ public abstract class ActionDialog extends BottomSheetDialog {
                 }
             }
         } catch (Exception exception) {
-            Log.e("ActionDialog", "onAttachedToWindow: ", exception);
+            Log.e("ActionDialog", "dismissWithoutSheetAnimation: ", exception);
         }
+
+        ActionDialog.super.dismiss();
     }
 
     @Override
     public void dismiss() {
         BottomSheetBehavior<?> behavior = getBehavior();
 
-        if (heightProvider.getKeyboardHeight() > 0) {
+        if (heightProvider != null && heightProvider.getKeyboardHeight() > 0) {
             UiUtils.hideKeyboard(root);
         } else if (canCollapse || behavior.getState() == BottomSheetBehavior.STATE_EXPANDED
                 || behavior.getState() == BottomSheetBehavior.STATE_HALF_EXPANDED) {
@@ -324,7 +390,14 @@ public abstract class ActionDialog extends BottomSheetDialog {
 
     @Override
     protected void onStop() {
-        dismiss();
+        if (heightProvider != null) {
+            if (heightProvider.getKeyboardHeight() > 0) {
+                UiUtils.hideKeyboard(root);
+            }
+            heightProvider.close();
+        }
+
+        unregisterListeners();
 
         super.onStop();
     }

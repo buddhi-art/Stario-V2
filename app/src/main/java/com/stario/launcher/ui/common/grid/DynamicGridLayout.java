@@ -25,11 +25,13 @@ import android.content.res.TypedArray;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.os.Handler;
+import android.os.Looper;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.DecelerateInterpolator;
+import android.view.animation.Interpolator;
 import android.widget.Toast;
 
 import com.stario.launcher.R;
@@ -56,6 +58,8 @@ public class DynamicGridLayout extends ViewGroup {
     private static final long REORDER_DELAY_MS = 300;
     private static final float HINT_SCALE = 0.85f;
     private static final float HINT_ALPHA = 0.85f;
+    private static final Interpolator DECELERATE_INTERPOLATOR = new DecelerateInterpolator();
+    private static final Interpolator DECELERATE_LAYOUT_INTERPOLATOR = new DecelerateInterpolator(1.2f);
 
     private final GridTemplateManager templateManager;
     private final Map<View, Point> preAnimVisualPos;
@@ -127,7 +131,7 @@ public class DynamicGridLayout extends ViewGroup {
         this.preAnimVisualPos = new HashMap<>();
         this.hintedViews = new ArrayList<>();
         this.currentHoverTarget = null;
-        this.handler = new Handler();
+        this.handler = new Handler(Looper.getMainLooper());
 
         this.lastReorderCol = -1;
         this.lastReorderRow = -1;
@@ -347,14 +351,15 @@ public class DynamicGridLayout extends ViewGroup {
 
                         if (Rect.intersects(ra, rb)) {
                             collisionFound = true;
-                            View victim = b.getKey();
+                            View victim = (b.getKey() == newItem) ? a.getKey() : b.getKey();
+                            Rect victimBounds = (victim == b.getKey()) ? rb : ra;
 
                             if (victim != newItem) {
                                 if (allowShrink) {
                                     DraggableGridItem d = (DraggableGridItem) victim;
 
                                     // Try shrinking width
-                                    if (rb.width() > d.minColSpan) {
+                                    if (victimBounds.width() > d.minColSpan) {
                                         GridState copy = current.cloneState();
                                         Rect victimRect = copy.placements.get(victim);
 
@@ -368,7 +373,7 @@ public class DynamicGridLayout extends ViewGroup {
                                     }
 
                                     // Try shrinking height
-                                    if (rb.height() > d.minRowSpan) {
+                                    if (victimBounds.height() > d.minRowSpan) {
                                         GridState copy = current.cloneState();
                                         Rect victimRect = copy.placements.get(victim);
 
@@ -600,15 +605,18 @@ public class DynamicGridLayout extends ViewGroup {
                     layoutParams.row = placedRect.top;
                     layoutParams.colSpan = placedRect.width();
                     layoutParams.rowSpan = placedRect.height();
-
-                    changed = true;
                 }
             }
         }
+    }
 
-        if (changed) {
-            requestLayout();
-        }
+    @Override
+    protected void onDetachedFromWindow() {
+        resetHoverState();
+        clearCurrentHints();
+        activeItem = null;
+
+        super.onDetachedFromWindow();
     }
 
     @Override
@@ -646,7 +654,7 @@ public class DynamicGridLayout extends ViewGroup {
                                 .translationY(0)
                                 .setDuration((long) Math.min(Animation.LONG.getDuration(),
                                         Math.max(Animation.SHORT.getDuration(), distance * 0.8)))
-                                .setInterpolator(new DecelerateInterpolator(1.2f))
+                                .setInterpolator(DECELERATE_LAYOUT_INTERPOLATOR)
                                 .start();
                     } else {
                         child.setTranslationX(0);
@@ -989,7 +997,7 @@ public class DynamicGridLayout extends ViewGroup {
                             .scaleY(HINT_SCALE)
                             .alpha(HINT_ALPHA)
                             .setDuration(Animation.MEDIUM.getDuration())
-                            .setInterpolator(new DecelerateInterpolator())
+                            .setInterpolator(DECELERATE_INTERPOLATOR)
                             .start();
                 }
             }
@@ -1019,7 +1027,7 @@ public class DynamicGridLayout extends ViewGroup {
                             .translationX(0)
                             .translationY(0)
                             .setDuration(Animation.SHORT.getDuration())
-                            .setInterpolator(new DecelerateInterpolator())
+                            .setInterpolator(DECELERATE_INTERPOLATOR)
                             .start();
                 }
             }
@@ -1043,7 +1051,7 @@ public class DynamicGridLayout extends ViewGroup {
                         .translationX(dx)
                         .translationY(dy)
                         .setDuration(Animation.MEDIUM.getDuration())
-                        .setInterpolator(new DecelerateInterpolator())
+                        .setInterpolator(DECELERATE_INTERPOLATOR)
                         .setListener(new AnimatorListenerAdapter() {
 
                             boolean handled = false;
@@ -1051,7 +1059,8 @@ public class DynamicGridLayout extends ViewGroup {
                             private void finish() {
                                 if (!handled) {
                                     handled = true;
-                                    runningAnimations--;
+                                    runningAnimations = Math.max(0, runningAnimations - 1);
+                                    view.animate().setListener(null);
                                 }
                             }
 

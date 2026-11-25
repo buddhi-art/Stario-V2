@@ -20,15 +20,14 @@ package com.stario.launcher.ui.common.lock;
 import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
-import android.app.Activity;
 import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.RadialGradient;
+import android.graphics.Shader;
 import android.util.AttributeSet;
-import android.view.Window;
-import android.view.WindowManager;
 
 import androidx.annotation.NonNull;
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator;
@@ -38,8 +37,12 @@ import com.stario.launcher.ui.utils.animation.Animation;
 import carbon.widget.ConstraintLayout;
 
 public class ClosingAnimationView extends ConstraintLayout {
-    private Activity activity;
     private Paint paint;
+    private Paint baseDimPaint;
+    private Matrix gradientMatrix;
+    private RadialGradient gradient;
+    private float maxRadius;
+    private float animatedValue;
     private boolean closed;
     private ValueAnimator animator;
     private float x = 0, y = 0;
@@ -47,27 +50,38 @@ public class ClosingAnimationView extends ConstraintLayout {
     public ClosingAnimationView(Context context) {
         super(context);
 
-        init(context);
+        init();
     }
 
     public ClosingAnimationView(Context context, AttributeSet attrs) {
         super(context, attrs);
 
-        init(context);
+        init();
     }
 
     public ClosingAnimationView(Context context, AttributeSet attrs, int defStyleAttr) {
         super(context, attrs, defStyleAttr);
 
-        init(context);
+        init();
     }
 
-    public void init(Context context) {
-        this.activity = (Activity) context;
+    public void init() {
         this.closed = false;
+        this.animatedValue = 1f;
         this.paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        this.paint.setDither(true);
+        this.baseDimPaint = new Paint();
+        this.baseDimPaint.setColor(Color.BLACK);
+        this.gradientMatrix = new Matrix();
+    }
 
-        paint.setDither(true);
+    @Override
+    protected void onDetachedFromWindow() {
+        if (animator != null && animator.isRunning()) {
+            animator.cancel();
+        }
+
+        super.onDetachedFromWindow();
     }
 
     @Override
@@ -75,23 +89,22 @@ public class ClosingAnimationView extends ConstraintLayout {
         super.dispatchDraw(canvas);
 
         if (closed) {
-            float value = (float) animator.getAnimatedValue();
-
-            if (value <= 0) {
+            if (animatedValue <= 0f) {
                 canvas.drawColor(Color.BLACK);
-            } else {
-                float abs = Math.max(getMeasuredWidth() - x, x);
-                float ord = Math.max(getMeasuredHeight() - y, y);
-                float radius = (float) Math.sqrt(abs * abs + ord * ord);
+            } else if (gradient != null) {
+                int paintAlpha = Math.max(0, Math.min(255, (int) (500f * (1f - animatedValue))));
+                int centerAlpha = Math.max(0, Math.min(255, (int) (paintAlpha * (1f - animatedValue))));
 
-                RadialGradient gradient = new RadialGradient(x, y,
-                        radius * value, Color.argb((1 - value), 0, 0, 0),
-                        Color.BLACK, android.graphics.Shader.TileMode.CLAMP);
-                paint.setShader(gradient);
+                if (centerAlpha > 0) {
+                    baseDimPaint.setAlpha(centerAlpha);
+                    canvas.drawRect(0f, 0f, getWidth(), getHeight(), baseDimPaint);
+                }
 
-                paint.setAlpha((int) Math.min(255, 500 * (1f - value)));
+                gradientMatrix.setScale(animatedValue, animatedValue, x, y);
+                gradient.setLocalMatrix(gradientMatrix);
 
-                canvas.drawCircle(x, y, radius, paint);
+                paint.setAlpha(paintAlpha);
+                canvas.drawCircle(x, y, maxRadius, paint);
             }
         }
     }
@@ -106,6 +119,7 @@ public class ClosingAnimationView extends ConstraintLayout {
         }
 
         closed = false;
+        invalidate();
 
         return true;
     }
@@ -118,6 +132,14 @@ public class ClosingAnimationView extends ConstraintLayout {
         this.x = x;
         this.y = y;
 
+        float abs = Math.max(getMeasuredWidth() - x, x);
+        float ord = Math.max(getMeasuredHeight() - y, y);
+        this.maxRadius = Math.max(1f, (float) Math.hypot(abs, ord));
+        this.gradient = new RadialGradient(x, y, maxRadius,
+                Color.TRANSPARENT, Color.BLACK, Shader.TileMode.CLAMP);
+        this.paint.setShader(gradient);
+        this.animatedValue = 1f;
+
         if (animator != null && animator.isRunning()) {
             animator.cancel();
         }
@@ -127,6 +149,7 @@ public class ClosingAnimationView extends ConstraintLayout {
         animator.setInterpolator(new FastOutSlowInInterpolator());
 
         animator.addUpdateListener(animation -> {
+            animatedValue = (float) animation.getAnimatedValue();
             invalidate();
         });
 

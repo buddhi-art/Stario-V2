@@ -74,10 +74,13 @@ public class AdaptiveIconView extends View {
     private Drawable badge;
     private boolean sizeRestricted;
     private boolean looseClipping;
+    private boolean receiversRegistered;
     private Paint shadowPaint;
     private Boolean grayscale;
     private boolean paused;
     private Path path;
+    private Rect clipRect;
+    private int lastClipSize = -1;
 
     public AdaptiveIconView(Context context) {
         super(context);
@@ -135,23 +138,40 @@ public class AdaptiveIconView extends View {
         }
 
         this.path = new Path();
-        this.icon = new ObjectDelegate<>((o) -> invalidate());
+        this.clipRect = new Rect();
+        this.icon = new ObjectDelegate<>((o) -> {
+            lastClipSize = -1;
+            invalidate();
+        });
         this.pathAlgorithm = new ObjectDelegate<>(
                 PathCornerTreatmentAlgorithm.fromIdentifier(
                         preferences.getInt(PathCornerTreatmentAlgorithm.PATH_ALGORITHM_ENTRY,
                                 PathCornerTreatmentAlgorithm.DEFAULT_PATH_ALGORITHM_ENTRY)
-                ), (o) -> requestLayout()
-        );
+                ), (o) -> {
+            lastClipSize = -1;
+            requestLayout();
+        });
         this.radius = new ObjectDelegate<>(
                 preferences.getFloat(CORNER_RADIUS_ENTRY,
-                        DEFAULT_CORNER_RADIUS), (o) -> requestLayout());
+                        DEFAULT_CORNER_RADIUS), (o) -> {
+            lastClipSize = -1;
+            requestLayout();
+        });
         this.badge = ResourcesCompat.getDrawable(context.getResources(),
                 R.drawable.ic_alternate_badge, context.getTheme());
+        if (this.badge != null) {
+            int intrinsicW = this.badge.getIntrinsicWidth();
+            int intrinsicH = this.badge.getIntrinsicHeight();
+            if (intrinsicW > 0 && intrinsicH > 0) {
+                this.badge.setBounds(0, 0, intrinsicW, intrinsicH);
+            }
+        }
 
         ColorMatrix matrix = new ColorMatrix();
         matrix.setSaturation(0);
         this.grayscaleFilter = new ColorMatrixColorFilter(matrix);
         this.profileStateBinding = null;
+        this.receiversRegistered = false;
         this.paused = false;
 
         this.shadowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
@@ -164,17 +184,23 @@ public class AdaptiveIconView extends View {
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
 
-        localBroadcastManager.registerReceiver(radiusReceiver,
-                new IntentFilter(IconsDialog.INTENT_CHANGE_CORNER_RADIUS));
-        localBroadcastManager.registerReceiver(squircleReceiver,
-                new IntentFilter(IconsDialog.INTENT_CHANGE_PATH_ALGORITHM));
+        if (!receiversRegistered) {
+            localBroadcastManager.registerReceiver(radiusReceiver,
+                    new IntentFilter(IconsDialog.INTENT_CHANGE_CORNER_RADIUS));
+            localBroadcastManager.registerReceiver(squircleReceiver,
+                    new IntentFilter(IconsDialog.INTENT_CHANGE_PATH_ALGORITHM));
+
+            if (profileStateBinding != null) {
+                localBroadcastManager.registerReceiver(profileStateBinding.receiver,
+                        profileStateBinding.filter);
+            }
+
+            receiversRegistered = true;
+        }
 
         if (profileStateBinding != null) {
             paused = profileStateBinding.isPaused(getContext());
             applyBadge = profileStateBinding.shouldApplyManagedBadge();
-
-            localBroadcastManager.registerReceiver(profileStateBinding.receiver,
-                    profileStateBinding.filter);
         }
 
         PathCornerTreatmentAlgorithm currentPathCornerTreatmentAlgorithm = PathCornerTreatmentAlgorithm
@@ -194,11 +220,15 @@ public class AdaptiveIconView extends View {
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
 
-        localBroadcastManager.unregisterReceiver(radiusReceiver);
-        localBroadcastManager.unregisterReceiver(squircleReceiver);
+        if (receiversRegistered) {
+            localBroadcastManager.unregisterReceiver(radiusReceiver);
+            localBroadcastManager.unregisterReceiver(squircleReceiver);
 
-        if (profileStateBinding != null) {
-            localBroadcastManager.unregisterReceiver(profileStateBinding.receiver);
+            if (profileStateBinding != null) {
+                localBroadcastManager.unregisterReceiver(profileStateBinding.receiver);
+            }
+
+            receiversRegistered = false;
         }
     }
 
@@ -226,8 +256,11 @@ public class AdaptiveIconView extends View {
                 measuredWidth = size;
             }
 
-            //noinspection SuspiciousNameCombination
-            setClipBounds(new Rect(0, 0, measuredWidth, measuredWidth));
+            if (measuredWidth != lastClipSize) {
+                //noinspection SuspiciousNameCombination
+                clipRect.set(0, 0, measuredWidth, measuredWidth);
+                setClipBounds(clipRect);
+            }
         }
 
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
@@ -294,8 +327,10 @@ public class AdaptiveIconView extends View {
             paused = profileStateBinding.isPaused(getContext());
             applyBadge = profileStateBinding.shouldApplyManagedBadge();
 
-            localBroadcastManager.registerReceiver(profileStateBinding.receiver,
-                    profileStateBinding.filter);
+            if (receiversRegistered) {
+                localBroadcastManager.registerReceiver(profileStateBinding.receiver,
+                        profileStateBinding.filter);
+            }
         } else {
             setIcon(null);
         }
@@ -303,7 +338,9 @@ public class AdaptiveIconView extends View {
 
     public void setIcon(Drawable icon) {
         if (profileStateBinding != null) {
-            localBroadcastManager.unregisterReceiver(profileStateBinding.receiver);
+            if (receiversRegistered) {
+                localBroadcastManager.unregisterReceiver(profileStateBinding.receiver);
+            }
             profileStateBinding = null;
         }
 
@@ -320,14 +357,24 @@ public class AdaptiveIconView extends View {
 
         paused = false;
         applyBadge = false;
+        lastClipSize = -1;
 
         post(this::requestLayout);
     }
 
     @Override
     public void setClipBounds(Rect clipBounds) {
+        if (clipBounds == null) {
+            lastClipSize = -1;
+            super.setClipBounds(null);
+            invalidate();
+            return;
+        }
+
+        int size = clipBounds.width();
+        lastClipSize = size;
+
         if (icon.getValue() != null) {
-            int size = clipBounds.width();
             int inset = (size - MAX_SHADOW_SIZE * 2);
 
             Drawable icon = this.icon.getValue();
@@ -369,8 +416,8 @@ public class AdaptiveIconView extends View {
         int saveCount = canvas.save();
         canvas.translate(MAX_SHADOW_SIZE, MAX_SHADOW_SIZE);
 
-        if (!looseClipping ||
-                (icon.getValue() instanceof AdaptiveIconDrawable)) {
+        Drawable iconDrawable = icon.getValue();
+        if (!looseClipping || (iconDrawable instanceof AdaptiveIconDrawable)) {
             canvas.drawPath(path, shadowPaint);
 
             int clipSave = canvas.save();
@@ -383,24 +430,23 @@ public class AdaptiveIconView extends View {
             super.draw(canvas);
         }
 
-        if (applyBadge && icon.getValue() != null) {
-            Rect iconBounds = icon.getValue().getBounds();
+        if (applyBadge && badge != null && iconDrawable != null) {
+            Rect iconBounds = iconDrawable.getBounds();
 
             int intrinsicW = badge.getIntrinsicWidth();
-            int intrinsicH = badge.getIntrinsicHeight();
-            badge.setBounds(0, 0, intrinsicW, intrinsicH);
+            if (intrinsicW > 0) {
+                float targetSize = iconBounds.width() * BADGE_SIZE;
+                float scale = targetSize / intrinsicW;
 
-            float targetSize = iconBounds.width() * BADGE_SIZE;
-            float scale = targetSize / intrinsicW;
+                int save = canvas.save();
 
-            int save = canvas.save();
+                canvas.translate(iconBounds.right - targetSize,
+                        iconBounds.bottom - targetSize);
+                canvas.scale(scale, scale);
 
-            canvas.translate(iconBounds.right - targetSize,
-                    iconBounds.bottom - targetSize);
-            canvas.scale(scale, scale);
-
-            badge.draw(canvas);
-            canvas.restoreToCount(save);
+                badge.draw(canvas);
+                canvas.restoreToCount(save);
+            }
         }
 
         canvas.restoreToCount(saveCount);
@@ -408,39 +454,43 @@ public class AdaptiveIconView extends View {
 
     @Override
     public void onDraw(@NonNull Canvas canvas) {
-        if (icon.getValue() != null) {
-            Drawable icon = this.icon.getValue();
+        Drawable iconDrawable = this.icon.getValue();
+        if (iconDrawable != null) {
+            boolean useGrayscale = paused || (grayscale != null && grayscale);
 
-            if (icon instanceof AdaptiveIconDrawable) {
-                AdaptiveIconDrawable adaptiveIconDrawable = (AdaptiveIconDrawable) icon;
+            if (iconDrawable instanceof AdaptiveIconDrawable) {
+                AdaptiveIconDrawable adaptiveIconDrawable = (AdaptiveIconDrawable) iconDrawable;
 
                 Drawable background = adaptiveIconDrawable.getBackground();
                 Drawable foreground = adaptiveIconDrawable.getForeground();
 
                 if (background != null) {
-                    if (paused || (grayscale != null && grayscale)) {
+                    if (useGrayscale) {
                         background.setColorFilter(grayscaleFilter);
+                        background.draw(canvas);
+                        background.setColorFilter(null);
+                    } else {
+                        background.draw(canvas);
                     }
-
-                    background.draw(canvas);
-                    background.setColorFilter(null);
                 }
 
                 if (foreground != null) {
-                    if (paused || (grayscale != null && grayscale)) {
+                    if (useGrayscale) {
                         foreground.setColorFilter(grayscaleFilter);
+                        foreground.draw(canvas);
+                        foreground.setColorFilter(null);
+                    } else {
+                        foreground.draw(canvas);
                     }
-
-                    foreground.draw(canvas);
-                    foreground.setColorFilter(null);
                 }
             } else {
-                if (paused || (grayscale != null && grayscale)) {
-                    icon.setColorFilter(grayscaleFilter);
+                if (useGrayscale) {
+                    iconDrawable.setColorFilter(grayscaleFilter);
+                    iconDrawable.draw(canvas);
+                    iconDrawable.setColorFilter(null);
+                } else {
+                    iconDrawable.draw(canvas);
                 }
-
-                icon.draw(canvas);
-                icon.setColorFilter(null);
             }
         }
     }

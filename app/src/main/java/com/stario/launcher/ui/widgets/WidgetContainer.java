@@ -34,6 +34,12 @@ public class WidgetContainer extends RelativeLayout implements Comparable<Widget
     private final AppWidgetHostView host;
     private final Widget widget;
     private WidgetMap.Cell origin; // top-left
+    private int lastHostWidthDp = -1;
+    private int lastHostHeightDp = -1;
+    private int lastAssignedWidth = -1;
+    private int lastAssignedHeight = -1;
+    private int lastAssignedRow = -1;
+    private int lastAssignedCol = -1;
 
     WidgetContainer(Context context, AppWidgetHostView host, Widget widget, WidgetMap.Cell cell) {
         super(context);
@@ -62,26 +68,44 @@ public class WidgetContainer extends RelativeLayout implements Comparable<Widget
     protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
         super.onMeasure(widthMeasureSpec, heightMeasureSpec);
 
+        if (!(getParent() instanceof WidgetGrid)) {
+            return;
+        }
+
         GridLayout.LayoutParams params = (GridLayout.LayoutParams) getLayoutParams();
 
         int cellSize = ((WidgetGrid) getParent()).getCellSize();
+        int targetWidth = cellSize * widget.size.width;
+        int targetHeight = cellSize * widget.size.height;
 
-        params.rowSpec = WidgetGrid.spec(origin.row, widget.size.height);
-        params.columnSpec = WidgetGrid.spec(origin.column, widget.size.width);
-        params.width = cellSize * widget.size.width;
-        params.height = cellSize * widget.size.height;
+        if (lastAssignedWidth != targetWidth || lastAssignedHeight != targetHeight
+                || lastAssignedRow != origin.row || lastAssignedCol != origin.column) {
+            params.rowSpec = WidgetGrid.spec(origin.row, widget.size.height);
+            params.columnSpec = WidgetGrid.spec(origin.column, widget.size.width);
+            params.width = targetWidth;
+            params.height = targetHeight;
 
-        setLayoutParams(params);
+            lastAssignedWidth = targetWidth;
+            lastAssignedHeight = targetHeight;
+            lastAssignedRow = origin.row;
+            lastAssignedCol = origin.column;
 
-        int hostWidth = params.width - getPaddingLeft() - getPaddingRight();
-        int hostHeight = params.height - getPaddingTop() - getPaddingBottom();
+            setLayoutParams(params);
+        }
 
-        if (getMeasuredWidth() > 0 && getMeasuredHeight() > 0) {
-            host.updateAppWidgetSize(null,
-                    (int) (hostWidth / Measurements.getDensity()),
-                    (int) (hostHeight / Measurements.getDensity()),
-                    (int) (hostWidth / Measurements.getDensity()),
-                    (int) (hostHeight / Measurements.getDensity()));
+        int hostWidth = targetWidth - getPaddingLeft() - getPaddingRight();
+        int hostHeight = targetHeight - getPaddingTop() - getPaddingBottom();
+        float density = Measurements.getDensity();
+
+        if (getMeasuredWidth() > 0 && getMeasuredHeight() > 0 && density > 0f) {
+            int widthDp = Math.max(0, (int) (hostWidth / density));
+            int heightDp = Math.max(0, (int) (hostHeight / density));
+
+            if (widthDp != lastHostWidthDp || heightDp != lastHostHeightDp) {
+                lastHostWidthDp = widthDp;
+                lastHostHeightDp = heightDp;
+                host.updateAppWidgetSize(null, widthDp, heightDp, widthDp, heightDp);
+            }
         }
     }
 

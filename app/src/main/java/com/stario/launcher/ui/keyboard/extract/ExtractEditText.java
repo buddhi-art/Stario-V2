@@ -108,7 +108,9 @@ public class ExtractEditText extends InlineAutocompleteEditText {
 
     private void openExtractDialog() {
         if (!extractDialog.isAdded()) {
-            extractDialog.show(manager, null);
+            if (!manager.isStateSaved()) {
+                extractDialog.show(manager, null);
+            }
         } else {
             Dialog dialog = extractDialog.getDialog();
 

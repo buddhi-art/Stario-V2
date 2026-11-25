@@ -33,6 +33,7 @@ import com.stario.launcher.utils.Utils;
 import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.lang.reflect.Type;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -53,11 +54,10 @@ public class GridTemplateManager {
         if (templateId == 0) {
             Log.w(TAG, "GridTemplateManager: a template file has not been provided.");
         } else {
-            try {
-                InputStream inputStream = context.getResources().openRawResource(templateId);
-
+            try (InputStream inputStream = context.getResources().openRawResource(templateId);
+                 InputStreamReader reader = new InputStreamReader(inputStream, StandardCharsets.UTF_8)) {
                 List<GridTemplate> list = Utils.getGsonInstance()
-                        .fromJson(new InputStreamReader(inputStream),
+                        .fromJson(reader,
                                 new TypeToken<List<GridTemplate>>() {
                                 }.getType());
 
@@ -84,13 +84,19 @@ public class GridTemplateManager {
 
         String savedJson = prefs.getString("state_" + key, null);
         if (savedJson != null) {
-            Type type = new TypeToken<Map<String,
-                    DynamicGridLayout.ItemLayoutData>>() {
-            }.getType();
+            try {
+                Type type = new TypeToken<Map<String,
+                        DynamicGridLayout.ItemLayoutData>>() {
+                }.getType();
 
-            Map<String, DynamicGridLayout.ItemLayoutData> savedMap =
-                    Utils.getGsonInstance().fromJson(savedJson, type);
-            layout.putAll(savedMap);
+                Map<String, DynamicGridLayout.ItemLayoutData> savedMap =
+                        Utils.getGsonInstance().fromJson(savedJson, type);
+                if (savedMap != null) {
+                    layout.putAll(savedMap);
+                }
+            } catch (Exception exception) {
+                Log.e(TAG, "getLayoutForSize: failed to parse saved layout", exception);
+            }
         }
 
         return layout;

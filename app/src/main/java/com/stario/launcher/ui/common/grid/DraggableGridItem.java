@@ -49,9 +49,12 @@ public class DraggableGridItem extends FrameLayout {
 
     private final Paint borderPaint;
     private final Paint handlePaint;
+    private final RectF borderRect = new RectF();
+    private final RectF handleRect = new RectF();
 
     private boolean isVisualResizeEnabled;
     private ValueAnimator alphaAnimator;
+    private ValueAnimator resizeAnimator;
     private boolean isResizingActive;
     private float visualHeight;
     private float visualWidth;
@@ -90,12 +93,12 @@ public class DraggableGridItem extends FrameLayout {
         int color = ((ThemedActivity) context)
                 .getAttributeData(com.google.android.material.R.attr.colorPrimaryFixed);
 
-        borderPaint = new Paint();
+        borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         borderPaint.setColor(color);
         borderPaint.setStyle(Paint.Style.STROKE);
         borderPaint.setStrokeWidth(Measurements.dpToPx(STROKE_WIDTH_DP));
 
-        handlePaint = new Paint();
+        handlePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         handlePaint.setColor(color);
         handlePaint.setStyle(Paint.Style.STROKE);
         handlePaint.setStrokeCap(Paint.Cap.ROUND);
@@ -150,14 +153,18 @@ public class DraggableGridItem extends FrameLayout {
     }
 
     public void animateVisualResize(float targetW, float targetH, Runnable onAnimationEnd) {
-        ValueAnimator anim = ValueAnimator.ofFloat(0f, 1f);
+        if (resizeAnimator != null) {
+            resizeAnimator.cancel();
+        }
+
+        resizeAnimator = ValueAnimator.ofFloat(0f, 1f);
         float startW = isVisualResizeEnabled ? visualWidth : getWidth();
         float startH = isVisualResizeEnabled ? visualHeight : getHeight();
 
         isVisualResizeEnabled = true;
 
-        anim.setDuration(200);
-        anim.addUpdateListener(animation -> {
+        resizeAnimator.setDuration(200);
+        resizeAnimator.addUpdateListener(animation -> {
             float frac = animation.getAnimatedFraction();
             visualWidth = startW + (targetW - startW) * frac;
             visualHeight = startH + (targetH - startH) * frac;
@@ -165,7 +172,7 @@ public class DraggableGridItem extends FrameLayout {
             invalidate();
         });
 
-        anim.addListener(new AnimatorListenerAdapter() {
+        resizeAnimator.addListener(new AnimatorListenerAdapter() {
             @Override
             public void onAnimationEnd(Animator animation) {
                 isVisualResizeEnabled = false;
@@ -176,7 +183,7 @@ public class DraggableGridItem extends FrameLayout {
             }
         });
 
-        anim.start();
+        resizeAnimator.start();
     }
 
     boolean isResizeHandleTouched(float x, float y) {
@@ -232,6 +239,20 @@ public class DraggableGridItem extends FrameLayout {
     }
 
     @Override
+    protected void onDetachedFromWindow() {
+        if (alphaAnimator != null) {
+            alphaAnimator.cancel();
+            alphaAnimator = null;
+        }
+        if (resizeAnimator != null) {
+            resizeAnimator.cancel();
+            resizeAnimator = null;
+        }
+
+        super.onDetachedFromWindow();
+    }
+
+    @Override
     protected void dispatchDraw(@NonNull Canvas canvas) {
         super.dispatchDraw(canvas);
 
@@ -246,14 +267,14 @@ public class DraggableGridItem extends FrameLayout {
             borderPaint.setAlpha((int) (baseAlpha * borderAlpha));
             handlePaint.setAlpha((int) (baseAlpha * Math.min(1, borderAlpha / IDLE_ALPHA)));
 
-            RectF rect = new RectF(
+            borderRect.set(
                     strokeWidth / 2f,
                     strokeWidth / 2f,
                     currentWidth - strokeWidth / 2f,
                     currentHeight - strokeWidth / 2f
             );
 
-            canvas.drawRoundRect(rect, cornerSize, cornerSize, borderPaint);
+            canvas.drawRoundRect(borderRect, cornerSize, cornerSize, borderPaint);
 
             boolean resizeW = canResizeWidth();
             boolean resizeH = canResizeHeight();
@@ -268,7 +289,7 @@ public class DraggableGridItem extends FrameLayout {
                     right = currentWidth - strokeWidth / 2f;
                     bottom = currentHeight - strokeWidth / 2f;
 
-                    RectF handleRect = new RectF(left, top, right, bottom);
+                    handleRect.set(left, top, right, bottom);
                     canvas.drawArc(handleRect, 20, 50, false, handlePaint);
                 } else if (resizeW) {
                     left = currentWidth - strokeWidth / 2f;

@@ -47,6 +47,20 @@ public class WidgetMap {
     }
 
     Cell getAvailableOrigin(WidgetSize size) {
+        if (columns <= 0 || size == null || size.width <= 0 || size.height <= 0) {
+            return new Cell(0, 0);
+        }
+
+        if (size.width > columns) {
+            int maxRow = 0;
+            for (Cell cell : set) {
+                if (cell.row + 1 > maxRow) {
+                    maxRow = cell.row + 1;
+                }
+            }
+            return new Cell(maxRow, 0);
+        }
+
         int column = 0;
         int row = 0;
 

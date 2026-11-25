@@ -12,6 +12,7 @@ package com.stario.launcher.ui.common;
 import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.graphics.Color;
@@ -24,10 +25,11 @@ import android.hardware.Sensor;
 import android.hardware.SensorEvent;
 import android.hardware.SensorEventListener;
 import android.hardware.SensorManager;
+import android.hardware.display.DisplayManager;
 import android.util.AttributeSet;
+import android.view.Display;
 import android.view.Surface;
 import android.view.View;
-import android.view.WindowManager;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -40,7 +42,6 @@ import com.stario.launcher.ui.Measurements;
 import com.stario.launcher.utils.Utils;
 
 import java.util.Calendar;
-import java.util.Locale;
 
 // Used Gemini 3 Pro for refining the layout logic
 public class StylizedClockView extends View implements SensorEventListener {
@@ -52,14 +53,31 @@ public class StylizedClockView extends View implements SensorEventListener {
     private static final float TILT_DEADZONE = 1.2f;
     private static final float TEST_HOUR_SIZE = 100f;
     private static final float BASE_GAP = 5f;
+    private static final int OUTLINE_TEXT_ALPHA = 120;
+
+    private static final String[] TWO_DIGITS = new String[60];
+
+    static {
+        for (int index = 0; index < TWO_DIGITS.length; index++) {
+            TWO_DIGITS[index] = (index < 10 ? "0" : "") + index;
+        }
+    }
 
     private RectF pillBackgroundRect;
     private RectF amContainerRect;
     private RectF pmContainerRect;
     private RectF contentRect;
+    private RectF bgRect;
+    private RectF fillRect;
+    private Path clipPath;
+    private Rect hourBounds;
+    private Rect minBounds;
+    private Rect amBounds;
 
     private Paint backgroundPaint;
     private Paint outlinePaint;
+    private Paint hourOutlinePaint;
+    private Paint minuteOutlinePaint;
     private Paint minutePaint;
     private Paint pillBgPaint;
     private Paint pillFgPaint;
@@ -68,7 +86,12 @@ public class StylizedClockView extends View implements SensorEventListener {
     int backgroundColor;
     int pillBgColor;
 
+    private float bgCornerRadius;
     private float containerRadius;
+    private float pillCenterX;
+    private float pillCenterY;
+    private float pillDiagonal;
+    private float pillRadius;
     private float minuteDrawX;
     private float minuteDrawY;
     private float hourDrawX;
@@ -80,9 +103,18 @@ public class StylizedClockView extends View implements SensorEventListener {
 
     private SensorManager sensorManager;
     private Sensor accelerometer;
+    private DisplayManager displayManager;
+    private DisplayManager.DisplayListener displayListener;
+    private int cachedRotation;
     private float gravityAngle;
 
     private SharedPreferences preferences;
+    private SharedPreferences.OnSharedPreferenceChangeListener preferenceChangeListener;
+    private int cachedBackgroundAlpha;
+    private boolean cachedIs24Hour;
+    private boolean preferenceListenerRegistered;
+    private boolean displayListenerRegistered;
+    private boolean sensorRegistered;
     private Calendar calendar;
     private Stario stario;
 
@@ -113,6 +145,12 @@ public class StylizedClockView extends View implements SensorEventListener {
         amContainerRect = new RectF();
         pmContainerRect = new RectF();
         pillBackgroundRect = new RectF();
+        bgRect = new RectF();
+        fillRect = new RectF();
+        clipPath = new Path();
+        hourBounds = new Rect();
+        minBounds = new Rect();
+        amBounds = new Rect();
 
         int textColor = Color.rgb(239, 223, 219);
         int outlineColor = Color.rgb(55, 46, 44);
@@ -149,6 +187,16 @@ public class StylizedClockView extends View implements SensorEventListener {
         outlinePaint.setStyle(Paint.Style.STROKE);
         outlinePaint.setColor(outlineColor);
 
+        hourOutlinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        hourOutlinePaint.setStyle(Paint.Style.STROKE);
+        hourOutlinePaint.setColor(outlineColor);
+        hourOutlinePaint.setAlpha(OUTLINE_TEXT_ALPHA);
+
+        minuteOutlinePaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        minuteOutlinePaint.setStyle(Paint.Style.STROKE);
+        minuteOutlinePaint.setColor(outlineColor);
+        minuteOutlinePaint.setAlpha(OUTLINE_TEXT_ALPHA);
+
         hourPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         hourPaint.setColor(textColor);
         hourPaint.setTypeface(clockfaceTypeface);
@@ -171,9 +219,88 @@ public class StylizedClockView extends View implements SensorEventListener {
         pillFgPaint.setStyle(Paint.Style.FILL);
 
         gravityAngle = 0f;
+        cachedRotation = Surface.ROTATION_0;
         sensorManager = (SensorManager) context.getSystemService(Context.SENSOR_SERVICE);
         if (sensorManager != null) {
             accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_GRAVITY);
+        }
+
+        displayManager = (DisplayManager) context.getSystemService(Context.DISPLAY_SERVICE);
+        displayListener = new DisplayManager.DisplayListener() {
+            @Override
+            public void onDisplayAdded(int displayId) {
+            }
+
+            @Override
+            public void onDisplayRemoved(int displayId) {
+            }
+
+            @Override
+            public void onDisplayChanged(int displayId) {
+                updateCachedRotation();
+            }
+        };
+
+        preferenceChangeListener = (sharedPreferences, key) -> {
+            if (key == null || BACKGROUND_ALPHA_KEY.equals(key)) {
+                int newAlpha = preferences.getInt(BACKGROUND_ALPHA_KEY, 0);
+                boolean bgZeroChanged = (cachedBackgroundAlpha == 0) != (newAlpha == 0);
+                cachedBackgroundAlpha = newAlpha;
+
+                if (bgZeroChanged && getWidth() > 0 && getHeight() > 0) {
+                    calculateLayout(getWidth(), getHeight());
+                }
+                invalidate();
+            }
+
+            if (key == null || IMPERIAL_KEY.equals(key)) {
+                cachedIs24Hour = !preferences.getBoolean(IMPERIAL_KEY, Utils.isSystemUsingImperial(stario));
+                updateSensorRegistration();
+                invalidate();
+            }
+        };
+
+        refreshCachedPreferences(false);
+    }
+
+    private void refreshCachedPreferences(boolean relayoutIfNeeded) {
+        int newAlpha = preferences.getInt(BACKGROUND_ALPHA_KEY, 0);
+        boolean bgZeroChanged = (cachedBackgroundAlpha == 0) != (newAlpha == 0);
+        cachedBackgroundAlpha = newAlpha;
+        cachedIs24Hour = !preferences.getBoolean(IMPERIAL_KEY, Utils.isSystemUsingImperial(stario));
+
+        if (relayoutIfNeeded && bgZeroChanged && getWidth() > 0 && getHeight() > 0) {
+            calculateLayout(getWidth(), getHeight());
+        }
+    }
+
+    private void updateCachedRotation() {
+        Display display = getDisplay();
+        if (display == null && displayManager != null) {
+            display = displayManager.getDisplay(Display.DEFAULT_DISPLAY);
+        }
+
+        if (display != null) {
+            cachedRotation = display.getRotation();
+        }
+    }
+
+    private void updateSensorRegistration() {
+        if (sensorManager == null || accelerometer == null) {
+            return;
+        }
+
+        boolean shouldRegister = isAttachedToWindow()
+                && getWindowVisibility() == VISIBLE
+                && getVisibility() == VISIBLE
+                && cachedIs24Hour;
+
+        if (shouldRegister && !sensorRegistered) {
+            sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI);
+            sensorRegistered = true;
+        } else if (!shouldRegister && sensorRegistered) {
+            sensorManager.unregisterListener(this);
+            sensorRegistered = false;
         }
     }
 
@@ -181,17 +308,40 @@ public class StylizedClockView extends View implements SensorEventListener {
     protected void onAttachedToWindow() {
         super.onAttachedToWindow();
 
-        if (accelerometer != null && getWindowVisibility() == VISIBLE) {
-            sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI);
+        refreshCachedPreferences(true);
+        updateCachedRotation();
+
+        if (!preferenceListenerRegistered) {
+            preferences.registerOnSharedPreferenceChangeListener(preferenceChangeListener);
+            preferenceListenerRegistered = true;
         }
+
+        if (displayManager != null && !displayListenerRegistered) {
+            displayManager.registerDisplayListener(displayListener, getHandler());
+            displayListenerRegistered = true;
+        }
+
+        updateSensorRegistration();
+        invalidate();
     }
 
     @Override
     protected void onDetachedFromWindow() {
         super.onDetachedFromWindow();
 
-        if (sensorManager != null) {
+        if (preferenceListenerRegistered) {
+            preferences.unregisterOnSharedPreferenceChangeListener(preferenceChangeListener);
+            preferenceListenerRegistered = false;
+        }
+
+        if (displayManager != null && displayListenerRegistered) {
+            displayManager.unregisterDisplayListener(displayListener);
+            displayListenerRegistered = false;
+        }
+
+        if (sensorManager != null && sensorRegistered) {
             sensorManager.unregisterListener(this);
+            sensorRegistered = false;
         }
     }
 
@@ -199,13 +349,27 @@ public class StylizedClockView extends View implements SensorEventListener {
     protected void onWindowVisibilityChanged(int visibility) {
         super.onWindowVisibilityChanged(visibility);
 
-        if (sensorManager != null) {
-            if (visibility == VISIBLE && accelerometer != null) {
-                sensorManager.registerListener(this, accelerometer, SensorManager.SENSOR_DELAY_UI);
-            } else {
-                sensorManager.unregisterListener(this);
-            }
+        updateSensorRegistration();
+        if (visibility == VISIBLE && getVisibility() == VISIBLE && isAttachedToWindow()) {
+            invalidate();
         }
+    }
+
+    @Override
+    protected void onVisibilityChanged(@NonNull View changedView, int visibility) {
+        super.onVisibilityChanged(changedView, visibility);
+
+        updateSensorRegistration();
+        if (visibility == VISIBLE && getWindowVisibility() == VISIBLE && isAttachedToWindow()) {
+            invalidate();
+        }
+    }
+
+    @Override
+    protected void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+
+        updateCachedRotation();
     }
 
     /**
@@ -223,13 +387,10 @@ public class StylizedClockView extends View implements SensorEventListener {
 
         float flatAmount = Math.min(1f,
                 Math.max(0f, Math.abs(z) - LYING_ON_TABLE_THRESHOLD));
-        int rotation = ((WindowManager) stario.getSystemService(Context.WINDOW_SERVICE))
-                .getDefaultDisplay()
-                .getRotation();
 
         float adjustedX = x;
         float adjustedY = y;
-        switch (rotation) {
+        switch (cachedRotation) {
             // portrait
             case Surface.ROTATION_0:
                 adjustedX = -x;
@@ -243,13 +404,13 @@ public class StylizedClockView extends View implements SensorEventListener {
 
                 break;
             // reverse portrait
-            case android.view.Surface.ROTATION_180:
+            case Surface.ROTATION_180:
                 adjustedX = x;
                 adjustedY = -y;
 
                 break;
             // reverse landscape
-            case android.view.Surface.ROTATION_270:
+            case Surface.ROTATION_270:
                 adjustedX = -y;
                 adjustedY = -x;
 
@@ -308,17 +469,13 @@ public class StylizedClockView extends View implements SensorEventListener {
         hourPaint.setTextSize(TEST_HOUR_SIZE);
         hourPaint.setFontVariationSettings("'VTCL' 100");
 
-        Rect hourBounds = new Rect();
         hourPaint.getTextBounds("00", 0, 2, hourBounds);
         float hourHeight = hourBounds.height();
         float hourWidth = hourBounds.width();
 
         float testAmPmSize = TEST_HOUR_SIZE * 0.11f;
         amPmPaint.setTextSize(testAmPmSize);
-        Rect amBounds = new Rect();
         amPmPaint.getTextBounds("AM", 0, 2, amBounds);
-
-        Rect minBounds = new Rect();
 
         float containerHeight;
         float stackedContainersHeight;
@@ -398,8 +555,7 @@ public class StylizedClockView extends View implements SensorEventListener {
         // takes just a bit less space than the fully available space on an axis).
         // When that happens, a small scale factor can be applied to align the content
         // to the bounds.
-        int backgroundAlpha = preferences.getInt(BACKGROUND_ALPHA_KEY, 0);
-        if (Math.abs(ratioXtoY - 1f) > MIN_SCALING_RATIO_THRESHOLD || backgroundAlpha == 0) {
+        if (Math.abs(ratioXtoY - 1f) > MIN_SCALING_RATIO_THRESHOLD || cachedBackgroundAlpha == 0) {
             float scale = Math.min(viewWidth / totalMaxWidth, viewHeight / totalMaxHeight);
 
             hourPaint.setTextSize(TEST_HOUR_SIZE * scale);
@@ -516,7 +672,27 @@ public class StylizedClockView extends View implements SensorEventListener {
         pmTextX = pmContainerRect.centerX();
         pmTextY = pmContainerRect.centerY() - (amBounds.top + amBounds.bottom) / 2f;
 
-        outlinePaint.setStrokeWidth(Measurements.dpToPx(1.5f));
+        float strokeWidth = Measurements.dpToPx(1.5f);
+        outlinePaint.setStrokeWidth(strokeWidth);
+
+        hourOutlinePaint.setStrokeWidth(strokeWidth);
+        hourOutlinePaint.setTextSize(hourPaint.getTextSize());
+        hourOutlinePaint.setTypeface(hourPaint.getTypeface());
+        hourOutlinePaint.setTextScaleX(hourPaint.getTextScaleX());
+
+        minuteOutlinePaint.setStrokeWidth(strokeWidth);
+        minuteOutlinePaint.setTextSize(minutePaint.getTextSize());
+        minuteOutlinePaint.setTypeface(minutePaint.getTypeface());
+        minuteOutlinePaint.setTextScaleX(minutePaint.getTextScaleX());
+
+        bgCornerRadius = Math.min(contentRect.width(), contentRect.height()) * 0.1f;
+        float halfStroke = strokeWidth / 2f;
+        bgRect.set(
+                contentRect.left + halfStroke,
+                contentRect.top + halfStroke,
+                contentRect.right - halfStroke,
+                contentRect.bottom - halfStroke
+        );
 
         pillBackgroundRect.set(
                 amContainerRect.left,
@@ -524,46 +700,58 @@ public class StylizedClockView extends View implements SensorEventListener {
                 amContainerRect.right,
                 pmContainerRect.bottom
         );
+
+        pillCenterX = pillBackgroundRect.centerX();
+        pillCenterY = pillBackgroundRect.centerY();
+        float pillWidth = pillBackgroundRect.width();
+        float pillHeight = pillBackgroundRect.height();
+        pillDiagonal = (float) Math.hypot(pillWidth, pillHeight);
+        pillRadius = pillDiagonal / 2f;
+
+        float clipPadding = containerRadius / 3f;
+        float clipRadius = Math.max(0f, containerRadius - clipPadding);
+        clipPath.reset();
+        clipPath.addRoundRect(
+                pillBackgroundRect.left + clipPadding,
+                pillBackgroundRect.top + clipPadding,
+                pillBackgroundRect.right - clipPadding,
+                pillBackgroundRect.bottom - clipPadding,
+                clipRadius,
+                clipRadius,
+                Path.Direction.CW
+        );
     }
 
     @Override
     @SuppressLint("MissingSuperCall")
     public void draw(@NonNull Canvas canvas) {
-        if (hourPaint == null) {
+        if (hourPaint == null || getWidth() <= 0 || getHeight() <= 0) {
             return;
         }
 
         // Background
-        float cornerRadius = Math.min(contentRect.width(), contentRect.height()) * 0.1f;
-        float halfStroke = outlinePaint.getStrokeWidth() / 2f;
-        RectF bgRect = new RectF(
-                contentRect.left + halfStroke,
-                contentRect.top + halfStroke,
-                contentRect.right - halfStroke,
-                contentRect.bottom - halfStroke
-        );
+        if (cachedBackgroundAlpha > 0) {
+            backgroundPaint.setAlpha(cachedBackgroundAlpha);
+            outlinePaint.setAlpha(cachedBackgroundAlpha);
 
-        int alpha = preferences.getInt(BACKGROUND_ALPHA_KEY, 0);
-        backgroundPaint.setAlpha(alpha);
-        outlinePaint.setAlpha(alpha);
+            canvas.drawRoundRect(
+                    bgRect,
+                    bgCornerRadius,
+                    bgCornerRadius,
+                    backgroundPaint
+            );
 
-        canvas.drawRoundRect(
-                bgRect,
-                cornerRadius,
-                cornerRadius,
-                backgroundPaint
-        );
-
-        canvas.drawRoundRect(
-                bgRect,
-                cornerRadius,
-                cornerRadius,
-                outlinePaint
-        );
+            canvas.drawRoundRect(
+                    bgRect,
+                    bgCornerRadius,
+                    bgCornerRadius,
+                    outlinePaint
+            );
+        }
 
         // Time compute
         calendar.setTimeInMillis(System.currentTimeMillis());
-        boolean is24Hour = !preferences.getBoolean(IMPERIAL_KEY, Utils.isSystemUsingImperial(stario));
+        boolean is24Hour = cachedIs24Hour;
 
         int hour = is24Hour ? calendar.get(Calendar.HOUR_OF_DAY) : calendar.get(Calendar.HOUR);
         if (!is24Hour && hour == 0) {
@@ -574,67 +762,40 @@ public class StylizedClockView extends View implements SensorEventListener {
         int second = calendar.get(Calendar.SECOND);
         int millisecond = calendar.get(Calendar.MILLISECOND);
 
-        String hourStr = String.format(Locale.US, "%02d", hour);
-        String minStr = String.format(Locale.US, "%02d", minute);
+        String hourStr = TWO_DIGITS[hour % TWO_DIGITS.length];
+        String minStr = TWO_DIGITS[minute % TWO_DIGITS.length];
 
         // Time drawing
-        outlinePaint.setAlpha(120);
-
         canvas.drawText(hourStr, hourDrawX, hourDrawY, hourPaint);
-        outlinePaint.setTextSize(hourPaint.getTextSize());
-        outlinePaint.setTypeface(hourPaint.getTypeface());
-        outlinePaint.setTextScaleX(hourPaint.getTextScaleX());
-        canvas.drawText(hourStr, hourDrawX, hourDrawY, outlinePaint);
+        canvas.drawText(hourStr, hourDrawX, hourDrawY, hourOutlinePaint);
 
         canvas.drawText(minStr, minuteDrawX, minuteDrawY, minutePaint);
-        outlinePaint.setTextSize(minutePaint.getTextSize());
-        outlinePaint.setTypeface(minutePaint.getTypeface());
-        outlinePaint.setTextScaleX(minutePaint.getTextScaleX());
-        canvas.drawText(minStr, minuteDrawX, minuteDrawY, outlinePaint);
+        canvas.drawText(minStr, minuteDrawX, minuteDrawY, minuteOutlinePaint);
 
         // AM/PM or 24H pill
         if (is24Hour) {
-            float centerX = pillBackgroundRect.centerX();
-            float centerY = pillBackgroundRect.centerY();
-            float width = pillBackgroundRect.width();
-            float height = pillBackgroundRect.height();
-            float diagonal = (float) Math.sqrt(width * width + height * height);
-            float radius = diagonal / 2f;
-
             pillBgPaint.setAlpha(255);
             canvas.drawRoundRect(pillBackgroundRect, containerRadius, containerRadius, pillBgPaint);
 
             canvas.save();
-
-            Path clipPath = new Path();
-            float padding = containerRadius / 3f;
-            clipPath.addRoundRect(
-                    pillBackgroundRect.left + padding,
-                    pillBackgroundRect.top + padding,
-                    pillBackgroundRect.right - padding,
-                    pillBackgroundRect.bottom - padding,
-                    containerRadius - padding,
-                    containerRadius - padding,
-                    Path.Direction.CW
-            );
-
             canvas.clipPath(clipPath);
-            canvas.translate(centerX, centerY);
+            canvas.translate(pillCenterX, pillCenterY);
             canvas.rotate(gravityAngle);
 
             float progress = (second * 1000f + millisecond) / 60000f;
-            float liquidLevel = radius - (diagonal * progress);
+            float liquidLevel = pillRadius - (pillDiagonal * progress);
 
-            RectF fillRect = new RectF(-radius, liquidLevel, radius, radius + 100f);
+            fillRect.set(-pillRadius, liquidLevel, pillRadius, pillRadius + 100f);
             canvas.drawRect(fillRect, pillFgPaint);
 
             canvas.restore();
         } else {
             boolean isAm = calendar.get(Calendar.AM_PM) == Calendar.AM;
+            outlinePaint.setAlpha(OUTLINE_TEXT_ALPHA);
 
             pillBgPaint.setAlpha(isAm ? 255 : 80);
             amPmPaint.setAlpha(isAm ? 255 : 80);
-            
+
             canvas.drawRoundRect(amContainerRect, containerRadius, containerRadius, pillBgPaint);
 
             if (!isAm) {
@@ -655,11 +816,13 @@ public class StylizedClockView extends View implements SensorEventListener {
             canvas.drawText("PM", pmTextX, pmTextY, amPmPaint);
         }
 
-        if (is24Hour && getVisibility() == VISIBLE && getWindowVisibility() == VISIBLE) {
-            postInvalidateOnAnimation();
-        } else if (getVisibility() == VISIBLE && getWindowVisibility() == VISIBLE) {
-            long now = System.currentTimeMillis();
-            postInvalidateDelayed(Math.max(50, 1000 - (now % 1000)));
+        if (isAttachedToWindow() && getVisibility() == VISIBLE && getWindowVisibility() == VISIBLE) {
+            if (is24Hour) {
+                postInvalidateOnAnimation();
+            } else {
+                long now = System.currentTimeMillis();
+                postInvalidateDelayed(Math.max(50, 1000 - (now % 1000)));
+            }
         }
     }
 }

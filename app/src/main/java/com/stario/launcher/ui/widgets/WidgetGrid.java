@@ -114,7 +114,8 @@ public class WidgetGrid extends GridLayout {
         LayoutSizeObserver.attach(this, LayoutSizeObserver.WIDTH, new LayoutSizeObserver.OnChange() {
             @Override
             public void onChange(View view, int watchFlags, Rect rect) {
-                columnCount.updateObject(Math.max(2, (rect.width() / Measurements.dpToPx(160) / 2) * 2));
+                int cellThreshold = Math.max(1, Measurements.dpToPx(160));
+                columnCount.updateObject(Math.max(2, (rect.width() / cellThreshold / 2) * 2));
             }
         });
     }
@@ -158,7 +159,7 @@ public class WidgetGrid extends GridLayout {
     }
 
     int getCellSize() {
-        return getMeasuredWidth() / columnCount.getObject();
+        return getMeasuredWidth() / Math.max(1, columnCount.getObject());
     }
 
     public void attach(AppWidgetHostView host, Widget widget) {
@@ -203,6 +204,6 @@ public class WidgetGrid extends GridLayout {
     }
 
     public int computeCellSize() {
-        return getWidth() / columnCount.getObject();
+        return getWidth() / Math.max(1, columnCount.getObject());
     }
 }

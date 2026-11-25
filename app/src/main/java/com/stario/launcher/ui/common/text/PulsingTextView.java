@@ -22,6 +22,7 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.LinearGradient;
+import android.graphics.Matrix;
 import android.graphics.Paint;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
@@ -35,18 +36,25 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.widget.AppCompatTextView;
 
 import com.stario.launcher.ui.Measurements;
+import com.stario.launcher.ui.utils.UiUtils;
 import com.stario.launcher.ui.utils.animation.Animation;
-
-import java.util.ArrayList;
-import java.util.List;
 
 public class PulsingTextView extends AppCompatTextView {
     private static final int FADE_LENGTH = 50;
+    private static final int[] GRADIENT_COLORS = {
+            Color.BLACK,
+            Color.argb(128, 0, 0, 0),
+            Color.BLACK
+    };
+    private static final float[] GRADIENT_POSITIONS = {0f, 0.5f, 1f};
+
     private ValueAnimator animator;
     private Paint gradientPaint;
+    private Matrix gradientMatrix;
+    private LinearGradient gradient;
     private boolean pulsating;
-    private int[] evenColors;
-    private int[] oddColors;
+    private float cycleDx;
+    private float cycleDy;
     private float offset;
 
     public PulsingTextView(Context context) {
@@ -68,19 +76,21 @@ public class PulsingTextView extends AppCompatTextView {
     }
 
     private void init() {
-        offset = 0;
+        offset = 0f;
         pulsating = true;
 
+        gradientMatrix = new Matrix();
         gradientPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
         gradientPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.DST_IN));
 
-        animator = ValueAnimator.ofFloat(0f, 2f);
+        animator = ValueAnimator.ofFloat(0f, 1f);
         animator.setDuration(Animation.SUSTAINED.getDuration());
         animator.setInterpolator(new LinearInterpolator());
         animator.setRepeatCount(ValueAnimator.INFINITE);
         animator.addUpdateListener(animation -> {
             if (pulsating && getVisibility() == VISIBLE && getWindowVisibility() == VISIBLE) {
                 offset = (float) animation.getAnimatedValue();
+                updateGradientMatrix();
                 invalidate();
             }
         });
@@ -105,7 +115,10 @@ public class PulsingTextView extends AppCompatTextView {
             return;
         }
 
-        if (pulsating && isAttachedToWindow() && getVisibility() == VISIBLE && getWindowVisibility() == VISIBLE) {
+        if (pulsating && UiUtils.areAnimationsOn()
+                && isAttachedToWindow()
+                && getVisibility() == VISIBLE
+                && getWindowVisibility() == VISIBLE) {
             if (!animator.isRunning()) {
                 animator.start();
             }
@@ -147,80 +160,73 @@ public class PulsingTextView extends AppCompatTextView {
     }
 
     @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
+    protected void onSizeChanged(int width, int height, int oldWidth, int oldHeight) {
+        super.onSizeChanged(width, height, oldWidth, oldHeight);
 
-        post(this::calculateGradients);
+        buildGradient(width, height);
     }
 
-    private void calculateGradients() {
-        int width = getWidth();
-        if (width <= 0) {
+    private void buildGradient(int width, int height) {
+        if (width <= 0 || height <= 0) {
+            gradient = null;
+            gradientPaint.setShader(null);
             return;
         }
 
-        List<Integer> colors = new ArrayList<>();
-        int fadeLength = Measurements.dpToPx(FADE_LENGTH);
+        int fadeLength = Math.max(1, Measurements.dpToPx(FADE_LENGTH));
+        int remaining = width;
+        int stopCount = 0;
 
-        while (width > -fadeLength) {
-            colors.add(Color.BLACK);
-            colors.add(Color.argb(0.5f, 0, 0, 0));
-
-            width -= fadeLength;
+        while (remaining > -fadeLength) {
+            stopCount += 2;
+            remaining -= fadeLength;
         }
 
-        evenColors = new int[colors.size()];
-        oddColors = new int[colors.size()];
+        float cycleFraction = 2f * (1f + (float) fadeLength / width) / stopCount;
+        cycleDx = width * cycleFraction;
+        cycleDy = height * 0.3f * cycleFraction;
 
-        for (int index = 0; index < colors.size() - 1; index++) {
-            int color = colors.get(index);
+        gradient = new LinearGradient(
+                0f, 0f,
+                cycleDx, cycleDy,
+                GRADIENT_COLORS,
+                GRADIENT_POSITIONS,
+                Shader.TileMode.REPEAT
+        );
+        updateGradientMatrix();
+        gradientPaint.setShader(gradient);
+    }
 
-            evenColors[index] = color;
-            oddColors[index + 1] = color;
+    private void updateGradientMatrix() {
+        if (gradient != null) {
+            gradientMatrix.setTranslate(cycleDx * offset, cycleDy * offset);
+            gradient.setLocalMatrix(gradientMatrix);
         }
-
-        int lastColor = colors.get(colors.size() - 1);
-        evenColors[colors.size() - 1] = lastColor;
-        oddColors[0] = lastColor;
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
-        if (pulsating && getVisibility() == VISIBLE) {
-            if (evenColors != null && getWidth() > 0 && getHeight() > 0) {
-                initGradient();
+        if (pulsating && UiUtils.areAnimationsOn() && getVisibility() == VISIBLE) {
+            int width = getWidth();
+            int height = getHeight();
 
-                int count = canvas.saveLayer(0.0f, 0.0f, (float) getWidth(), (float) getHeight(), null);
-                super.onDraw(canvas);
+            if (width > 0 && height > 0) {
+                if (gradient == null) {
+                    buildGradient(width, height);
+                }
 
-                canvas.drawRect(0, 0, getWidth(), getHeight(), gradientPaint);
+                if (gradient != null) {
+                    int count = canvas.saveLayer(0.0f, 0.0f, (float) width, (float) height, null);
+                    super.onDraw(canvas);
 
-                canvas.restoreToCount(count);
-            } else {
-                super.onDraw(canvas);
+                    canvas.drawRect(0, 0, width, height, gradientPaint);
+
+                    canvas.restoreToCount(count);
+                    return;
+                }
             }
-        } else {
-            super.onDraw(canvas);
-        }
-    }
-
-    private void initGradient() {
-        LinearGradient gradient = new LinearGradient(0, 0, getWidth(), getHeight() * 0.3f,
-                ((int) offset) % 2 == 0 ? evenColors : oddColors,
-                generatePositions(), Shader.TileMode.CLAMP);
-        gradientPaint.setShader(gradient);
-    }
-
-    private float[] generatePositions() {
-        float fadeLength = Measurements.dpToPx(FADE_LENGTH);
-        float[] positions = new float[evenColors.length];
-
-        float interval = (1f + fadeLength / getWidth()) / positions.length;
-
-        for (int index = 0; index < positions.length; index++) {
-            positions[index] = interval * ((index - 1) + offset % 1);
         }
 
-        return positions;
+        super.onDraw(canvas);
     }
 }

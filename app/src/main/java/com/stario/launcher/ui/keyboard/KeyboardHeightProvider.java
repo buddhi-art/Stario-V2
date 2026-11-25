@@ -43,9 +43,12 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class KeyboardHeightProvider extends PopupWindow {
     private final ViewTreeObserver.OnGlobalLayoutListener listener;
     private final List<KeyboardHeightListener> observers;
+    private final Runnable deferredNotifyRunnable;
     private final Activity activity;
     private final View parentView;
     private final View popupView;
+    private final Point screenSize;
+    private final Rect visibleFrame;
 
     private int oldHeight;
 
@@ -55,16 +58,22 @@ public class KeyboardHeightProvider extends PopupWindow {
         this.oldHeight = Integer.MIN_VALUE;
 
         this.observers = new CopyOnWriteArrayList<>();
+        this.screenSize = new Point();
+        this.visibleFrame = new Rect();
         this.popupView = new LinearLayout(activity);
         popupView.setLayoutParams(new LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         popupView.setBackground(new ColorDrawable(0));
 
+        this.deferredNotifyRunnable = () -> notifyKeyboardHeightChanged(getKeyboardHeight());
         this.listener = () -> {
             notifyKeyboardHeightChanged(getKeyboardHeight());
             // on API 29, the GlobalLayoutListener fires before
             // PopupWindow finishes the resizing. Add a post
             // call just to be safe
-            popupView.post(() -> notifyKeyboardHeightChanged(getKeyboardHeight()));
+            if (!Utils.isMinimumSDK(Build.VERSION_CODES.R)) {
+                popupView.removeCallbacks(deferredNotifyRunnable);
+                popupView.post(deferredNotifyRunnable);
+            }
         };
 
         setContentView(popupView);
@@ -79,22 +88,38 @@ public class KeyboardHeightProvider extends PopupWindow {
     }
 
     public void start() {
-        if (!isShowing() && parentView.getWindowToken() != null) {
+        if (!isShowing() && parentView != null && parentView.getWindowToken() != null) {
             setBackgroundDrawable(new ColorDrawable(0));
             showAtLocation(parentView, Gravity.NO_GRAVITY, 0, 0);
 
-            parentView.getViewTreeObserver()
-                    .addOnGlobalLayoutListener(listener);
+            ViewTreeObserver observer = parentView.getViewTreeObserver();
+            if (observer.isAlive()) {
+                observer.removeOnGlobalLayoutListener(listener);
+                observer.addOnGlobalLayoutListener(listener);
+            }
 
             notifyKeyboardHeightChanged(getKeyboardHeight(), true);
         }
     }
 
+    @Override
+    public void dismiss() {
+        popupView.removeCallbacks(deferredNotifyRunnable);
+
+        if (parentView != null) {
+            ViewTreeObserver observer = parentView.getViewTreeObserver();
+            if (observer.isAlive()) {
+                observer.removeOnGlobalLayoutListener(listener);
+            }
+        }
+
+        if (isShowing()) {
+            super.dismiss();
+        }
+    }
+
     public void close() {
         dismiss();
-
-        parentView.getViewTreeObserver()
-                .removeOnGlobalLayoutListener(listener);
     }
 
     public void addKeyboardHeightListener(KeyboardHeightListener observer) {
@@ -126,7 +151,7 @@ public class KeyboardHeightProvider extends PopupWindow {
     }
 
     public int getKeyboardHeight() {
-        if (!isShowing()) {
+        if (!isShowing() || parentView == null) {
             return 0;
         }
 
@@ -141,8 +166,11 @@ public class KeyboardHeightProvider extends PopupWindow {
 
             return 0;
         } else {
-            Point screenSize = new Point();
+            @SuppressWarnings("deprecation")
             Display display = activity.getWindowManager().getDefaultDisplay();
+            if (display == null) {
+                return 0;
+            }
             display.getSize(screenSize);
 
             DisplayCutout displayCutout = display.getCutout();
@@ -150,10 +178,9 @@ public class KeyboardHeightProvider extends PopupWindow {
                 screenSize.y += displayCutout.getSafeInsetTop();
             }
 
-            Rect rect = new Rect();
-            popupView.getWindowVisibleDisplayFrame(rect);
+            popupView.getWindowVisibleDisplayFrame(visibleFrame);
 
-            return screenSize.y - rect.bottom;
+            return screenSize.y - visibleFrame.bottom;
         }
     }
 

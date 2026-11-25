@@ -23,14 +23,19 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.animation.Interpolator;
 import android.view.animation.PathInterpolator;
 import android.widget.RemoteViews;
+
+import androidx.interpolator.view.animation.FastOutSlowInInterpolator;
 
 import com.stario.launcher.ui.utils.animation.Animation;
 
 @SuppressLint("ViewConstructor")
 public class WidgetHostView extends RoundedWidgetHost {
     static final float STARTING_SCALE = 0.9f;
+    private static final Interpolator PRESS_INTERPOLATOR = new PathInterpolator(0.5f, 0, 0.2f, 1);
+    private static final Interpolator RELEASE_INTERPOLATOR = new FastOutSlowInInterpolator();
     private CheckForLongPress mPendingCheckForLongPress;
     private boolean mHasPerformedLongPress;
     private final float moveSlop;
@@ -112,9 +117,17 @@ public class WidgetHostView extends RoundedWidgetHost {
                 animate().scaleY(1)
                         .scaleX(1)
                         .alpha(1)
+                        .setInterpolator(RELEASE_INTERPOLATOR)
                         .setDuration(Animation.SHORT.getDuration());
             }
         }
+    }
+
+    @Override
+    protected void onDetachedFromWindow() {
+        removeCheck();
+
+        super.onDetachedFromWindow();
     }
 
     @Override
@@ -123,6 +136,10 @@ public class WidgetHostView extends RoundedWidgetHost {
     }
 
     private void postCheckForLongClick() {
+        if (mPendingCheckForLongPress != null) {
+            removeCallbacks(mPendingCheckForLongPress);
+        }
+
         mHasPerformedLongPress = false;
 
         mPendingCheckForLongPress = new CheckForLongPress();
@@ -131,7 +148,7 @@ public class WidgetHostView extends RoundedWidgetHost {
         animate().scaleY(STARTING_SCALE)
                 .scaleX(STARTING_SCALE)
                 .alpha(0.7f)
-                .setInterpolator(new PathInterpolator(0.5f, 0, 0.2f, 1))
+                .setInterpolator(PRESS_INTERPOLATOR)
                 .setDuration(ViewConfiguration.getLongPressTimeout());
     }
 

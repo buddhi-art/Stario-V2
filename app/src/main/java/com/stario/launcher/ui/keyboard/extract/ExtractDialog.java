@@ -43,6 +43,7 @@ import com.stario.launcher.ui.Measurements;
 import com.stario.launcher.ui.keyboard.InlineAutocompleteEditText;
 import com.stario.launcher.ui.keyboard.KeyboardHeightProvider;
 import com.stario.launcher.ui.utils.UiUtils;
+import com.stario.launcher.utils.objects.ObservableObject;
 
 public class ExtractDialog extends DialogFragment {
     private final KeyboardHeightProvider heightProvider;
@@ -50,6 +51,11 @@ public class ExtractDialog extends DialogFragment {
     private final ThemedActivity activity;
 
     private InlineAutocompleteEditText extractedEditText;
+    private ObservableObject.OnSet<Integer> statusBarListener;
+    private ObservableObject.OnSet<Integer> navListener;
+    private KeyboardHeightProvider.KeyboardHeightListener keyboardHeightListener;
+    private TextWatcher textWatcher;
+    private Runnable showKeyboardRunnable;
     private boolean shown;
 
     public ExtractDialog(@NonNull ExtractEditText editText) {
@@ -129,6 +135,9 @@ public class ExtractDialog extends DialogFragment {
     public void onStop() {
         super.onStop();
 
+        if (showKeyboardRunnable != null) {
+            UiUtils.removeUICallback(showKeyboardRunnable);
+        }
         heightProvider.close();
     }
 
@@ -149,7 +158,7 @@ public class ExtractDialog extends DialogFragment {
         extractedEditText.setInputType(InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS |
                 InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
         extractedEditText.setAutocompleteProvider(editText.getAutocompleteProvider());
-        extractedEditText.addTextChangedListener(new TextWatcher() {
+        textWatcher = new TextWatcher() {
             @Override
             public void beforeTextChanged(CharSequence s, int start, int count, int after) {
             }
@@ -164,23 +173,26 @@ public class ExtractDialog extends DialogFragment {
                     editText.setText(s);
                 }
             }
-        });
+        };
+        extractedEditText.addTextChangedListener(textWatcher);
 
         ViewGroup.MarginLayoutParams params = (ViewGroup.MarginLayoutParams) view.getLayoutParams();
 
-        Measurements.addStatusBarListener(value -> {
+        statusBarListener = value -> {
             params.topMargin = value;
 
             view.requestLayout();
-        });
+        };
+        Measurements.addStatusBarListener(statusBarListener);
 
-        Measurements.addNavListener(value -> {
+        navListener = value -> {
             params.bottomMargin = value + heightProvider.getKeyboardHeight();
 
             view.requestLayout();
-        });
+        };
+        Measurements.addNavListener(navListener);
 
-        heightProvider.addKeyboardHeightListener(height -> {
+        keyboardHeightListener = height -> {
             if (height <= 0) {
                 if (shown) {
                     ExtractDialog.this.dismiss();
@@ -194,17 +206,51 @@ public class ExtractDialog extends DialogFragment {
             params.bottomMargin = height + Measurements.getNavHeight();
 
             view.requestLayout();
-        });
+        };
+        heightProvider.addKeyboardHeightListener(keyboardHeightListener);
 
-        UiUtils.post(new Runnable() {
+        showKeyboardRunnable = new Runnable() {
             @Override
             public void run() {
-                if (!shown) {
+                if (!shown && isAdded() && extractedEditText != null) {
                     UiUtils.showKeyboard(extractedEditText);
                     UiUtils.postDelayed(this, 50);
                 }
             }
-        });
+        };
+        UiUtils.post(showKeyboardRunnable);
+    }
+
+    @Override
+    public void onDestroyView() {
+        if (showKeyboardRunnable != null) {
+            UiUtils.removeUICallback(showKeyboardRunnable);
+            showKeyboardRunnable = null;
+        }
+
+        if (statusBarListener != null) {
+            Measurements.removeStatusBarListener(statusBarListener);
+            statusBarListener = null;
+        }
+
+        if (navListener != null) {
+            Measurements.removeNavListener(navListener);
+            navListener = null;
+        }
+
+        if (keyboardHeightListener != null) {
+            heightProvider.removeKeyboardHeightListener(keyboardHeightListener);
+            keyboardHeightListener = null;
+        }
+
+        if (extractedEditText != null && textWatcher != null) {
+            extractedEditText.removeTextChangedListener(textWatcher);
+            textWatcher = null;
+        }
+
+        extractedEditText = null;
+
+        super.onDestroyView();
     }
 
     @Override
@@ -216,7 +262,9 @@ public class ExtractDialog extends DialogFragment {
 
     @Override
     public void dismiss() {
-        editText.setText(extractedEditText.getText());
+        if (extractedEditText != null) {
+            editText.setText(extractedEditText.getText());
+        }
 
         super.dismiss();
     }

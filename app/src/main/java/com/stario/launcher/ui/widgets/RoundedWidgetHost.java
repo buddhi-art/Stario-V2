@@ -29,8 +29,7 @@ public class RoundedWidgetHost extends AppWidgetHostView {
     public RoundedWidgetHost(Context context) {
         super(context);
 
-        setClipChildren(true);
-        setClipToOutline(true);
+        UiUtils.roundViewGroup(this, RADIUS_DP);
     }
 
     public RoundedWidgetHost(Context context, ViewGroup.LayoutParams params) {
@@ -38,6 +37,7 @@ public class RoundedWidgetHost extends AppWidgetHostView {
 
         setLayoutParams(params);
         setPadding(0, 0, 0, 0);
+        UiUtils.roundViewGroup(this, RADIUS_DP);
     }
 
     @Override
@@ -48,12 +48,5 @@ public class RoundedWidgetHost extends AppWidgetHostView {
     @Override
     public void setPaddingRelative(int start, int top, int end, int bottom) {
         super.setPaddingRelative(0, 0, 0, 0);
-    }
-
-    @Override
-    protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-        super.onMeasure(widthMeasureSpec, heightMeasureSpec);
-
-        UiUtils.roundViewGroup(this, RADIUS_DP);
     }
 }

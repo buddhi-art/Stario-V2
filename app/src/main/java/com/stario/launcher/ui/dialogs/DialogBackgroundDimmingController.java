@@ -42,6 +42,7 @@ import android.view.accessibility.AccessibilityEvent;
 import androidx.annotation.FloatRange;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.content.ContextCompat;
 
 import com.stario.launcher.themes.ThemedActivity;
 import com.stario.launcher.utils.Utils;
@@ -63,6 +64,7 @@ public class DialogBackgroundDimmingController
 
     private DimmingController dimmingController;
     private boolean hasLimitedResources;
+    private boolean isAttached;
     private Window window;
 
     private DialogBackgroundDimmingController(ThemedActivity activity) {
@@ -74,6 +76,7 @@ public class DialogBackgroundDimmingController
         this.powerManager = activity.getSystemService(PowerManager.class);
         this.settings = activity.getApplicationContext().getSettings();
         this.hasLimitedResources = false;
+        this.isAttached = false;
 
         this.batterySaverReceiver = new BroadcastReceiver() {
             @Override
@@ -103,7 +106,7 @@ public class DialogBackgroundDimmingController
                         return;
                     }
 
-                    factor = factor * multiplier;
+                    factor = Math.max(0f, Math.min(1f, factor)) * multiplier;
 
                     updateAlpha(factor);
                     this.lastFactor = factor;
@@ -113,7 +116,7 @@ public class DialogBackgroundDimmingController
                     }
 
                     if (Utils.isMinimumSDK(Build.VERSION_CODES.S)) {
-                        int blurRadius = (int) (MAX_BLUR_SIZE * factor);
+                        int blurRadius = Math.max(0, (int) (MAX_BLUR_SIZE * factor));
 
                         if (blurRadius != lastBlurStep) {
                             controller.window.setBackgroundBlurRadius(blurRadius);
@@ -140,8 +143,11 @@ public class DialogBackgroundDimmingController
                 }
 
                 private void updateAlpha(float factor) {
-                    controller.background.setAlpha((int) ((controller.hasLimitedResources ?
-                            MAX_BACKGROUND_ALPHA_LOW_SPEC : MAX_BACKGROUND_ALPHA) * factor));
+                    int maxAlpha = controller.hasLimitedResources
+                            ? MAX_BACKGROUND_ALPHA_LOW_SPEC
+                            : MAX_BACKGROUND_ALPHA;
+                    int alpha = Math.max(0, Math.min(255, (int) (maxAlpha * factor)));
+                    controller.background.setAlpha(alpha);
                 }
             };
 
@@ -183,7 +189,7 @@ public class DialogBackgroundDimmingController
 
     private void invalidateLowSpec() {
         hasLimitedResources = settings.getBoolean(LOW_SPEC_KEY, false)
-                || powerManager.isPowerSaveMode();
+                || (powerManager != null && powerManager.isPowerSaveMode());
 
         if (window == null || dimmingController == null) {
             return;
@@ -193,6 +199,11 @@ public class DialogBackgroundDimmingController
     }
 
     private void attach() {
+        if (isAttached) {
+            return;
+        }
+        isAttached = true;
+
         invalidateLowSpec();
 
         if (window != null) {
@@ -201,13 +212,25 @@ public class DialogBackgroundDimmingController
             window.clearFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND);
         }
 
-        activity.registerReceiver(batterySaverReceiver,
-                new IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED));
+        ContextCompat.registerReceiver(
+                activity,
+                batterySaverReceiver,
+                new IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED),
+                ContextCompat.RECEIVER_NOT_EXPORTED
+        );
         settings.registerOnSharedPreferenceChangeListener(DialogBackgroundDimmingController.this);
     }
 
     private void detach() {
-        activity.unregisterReceiver(batterySaverReceiver);
+        if (!isAttached) {
+            return;
+        }
+        isAttached = false;
+
+        try {
+            activity.unregisterReceiver(batterySaverReceiver);
+        } catch (IllegalArgumentException ignored) {
+        }
         settings.unregisterOnSharedPreferenceChangeListener(DialogBackgroundDimmingController.this);
     }
 

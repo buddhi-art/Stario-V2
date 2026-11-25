@@ -236,9 +236,18 @@ public class OverScrollRecyclerView extends RecyclerView implements OverScroll {
     }
 
     @Override
+    protected void onDetachedFromWindow() {
+        for (int index = 0, size = edgeEffects.size(); index < size; index++) {
+            edgeEffects.get(index).finish();
+        }
+
+        super.onDetachedFromWindow();
+    }
+
+    @Override
     public boolean dispatchTouchEvent(MotionEvent event) {
-        for (OverScrollEffect<OverScrollRecyclerView> effect : edgeEffects) {
-            effect.onTouchEvent(event);
+        for (int index = 0, size = edgeEffects.size(); index < size; index++) {
+            edgeEffects.get(index).onTouchEvent(event);
         }
 
         return super.dispatchTouchEvent(event);
@@ -246,14 +255,20 @@ public class OverScrollRecyclerView extends RecyclerView implements OverScroll {
 
     @Override
     protected void dispatchDraw(@NonNull Canvas canvas) {
-        if (!contracts.isEmpty()) {
-            for (OverScrollContract contract : contracts) {
-                if (contract.prepare(canvas)) {
-                    break;
-                }
+        int saveCount = -1;
+        for (int index = 0, size = contracts.size(); index < size; index++) {
+            int currentSave = canvas.save();
+            if (contracts.get(index).prepare(canvas)) {
+                saveCount = currentSave;
+                break;
             }
+            canvas.restoreToCount(currentSave);
         }
 
         super.dispatchDraw(canvas);
+
+        if (saveCount != -1) {
+            canvas.restoreToCount(saveCount);
+        }
     }
 }

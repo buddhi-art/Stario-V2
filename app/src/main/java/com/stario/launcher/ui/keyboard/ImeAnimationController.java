@@ -52,7 +52,7 @@ public class ImeAnimationController {
     }
 
     public void startControlRequest(View view) {
-        if (disallowAnimationControl) {
+        if (disallowAnimationControl || isRequestPending() || isAnimationInProgress()) {
             return;
         }
 
@@ -113,11 +113,15 @@ public class ImeAnimationController {
             int bottom = Math.max(hiddenBottom, Math.min(shownBottom, inset));
 
             int consumed = insetsAnimationController.getCurrentInsets().bottom - bottom;
+            int range = endBottom - startBottom;
+            float fraction = range != 0
+                    ? Math.max(0f, Math.min(1f, (float) (bottom - startBottom) / range))
+                    : 0f;
 
             insetsAnimationController.setInsetsAndAlpha(
                     Insets.of(0, 0, 0, bottom),
                     1f,
-                    (float) (bottom - startBottom) / (endBottom - startBottom)
+                    fraction
             );
 
             return consumed;
@@ -143,9 +147,15 @@ public class ImeAnimationController {
             throw new RuntimeException("Fraction can only be returned if the animation is running.");
         }
 
-        return (float) insetsAnimationController.getCurrentInsets().bottom /
-                (insetsAnimationController.getShownStateInsets().bottom -
-                        insetsAnimationController.getHiddenStateInsets().bottom);
+        int hiddenBottom = insetsAnimationController.getHiddenStateInsets().bottom;
+        int shownBottom = insetsAnimationController.getShownStateInsets().bottom;
+        int range = shownBottom - hiddenBottom;
+        if (range <= 0) {
+            return 0f;
+        }
+
+        float fraction = (float) (insetsAnimationController.getCurrentInsets().bottom - hiddenBottom) / range;
+        return Math.max(0f, Math.min(1f, fraction));
     }
 
     public boolean isCurrentPositionFullyHidden() {
@@ -217,33 +227,38 @@ public class ImeAnimationController {
     }
 
     private void reset() {
+        if (springAnimation != null) {
+            springAnimation.cancel();
+            springAnimation = null;
+        }
         cancel();
 
-        springAnimation = null;
         insetsAnimationController = null;
         cancellationSignal = null;
         isImeShownAtStart = false;
     }
 
     private void setVisibilityWithAnimation(boolean visible, Integer velocity) {
-        springAnimation = new SpringAnimation(new FloatValueHolder((float) insetsAnimationController.getCurrentInsets().bottom));
+        SpringForce spring = new SpringForce(
+                visible ? (float) insetsAnimationController.getShownStateInsets().bottom :
+                        (float) insetsAnimationController.getHiddenStateInsets().bottom);
+        spring.setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY);
+        spring.setStiffness(3000f);
+
+        springAnimation = new SpringAnimation(
+                new FloatValueHolder((float) insetsAnimationController.getCurrentInsets().bottom));
+        springAnimation.setSpring(spring);
 
         springAnimation.addUpdateListener(
                 (animation, value, vel) -> insetTo(Math.round(value)));
         springAnimation.addEndListener((animation, canceled, value, vel) -> {
-            if (!canceled) {
-                if (insetsAnimationController != null) {
-                    if (isCurrentPositionFullyShown()) {
-                        finish(true);
-                    } else if (isCurrentPositionFullyHidden()) {
-                        finish(false);
-                    } else {
-                        if (insetsAnimationController.getCurrentFraction() >= SCROLL_THRESHOLD) {
-                            finish(isImeShownAtStart);
-                        } else {
-                            finish(!isImeShownAtStart);
-                        }
-                    }
+            if (!canceled && insetsAnimationController != null) {
+                if (isCurrentPositionFullyShown()) {
+                    finish(true);
+                } else if (isCurrentPositionFullyHidden()) {
+                    finish(false);
+                } else {
+                    finish(visible);
                 }
             }
 
@@ -254,12 +269,7 @@ public class ImeAnimationController {
             springAnimation.setStartVelocity(velocity);
         }
 
-        springAnimation.animateToFinalPosition(
-                visible ? (float) insetsAnimationController.getShownStateInsets().bottom :
-                        (float) insetsAnimationController.getHiddenStateInsets().bottom);
-
-        springAnimation.getSpring().setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY);
-        springAnimation.getSpring().setStiffness(3000);
+        springAnimation.start();
     }
 
     public boolean isAnimationControlDisallowed() {
