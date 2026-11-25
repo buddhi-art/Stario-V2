@@ -55,6 +55,7 @@ import com.stario.launcher.R;
 import com.stario.launcher.Stario;
 import com.stario.launcher.activities.pages.PageManager;
 import com.stario.launcher.activities.settings.dialogs.HomeScreenDialog;
+import com.stario.launcher.activities.settings.dialogs.RootDialog;
 import com.stario.launcher.activities.settings.dialogs.hide.HideApplicationsDialog;
 import com.stario.launcher.activities.settings.dialogs.icons.IconsDialog;
 import com.stario.launcher.activities.settings.dialogs.license.LicensesDialog;
@@ -75,6 +76,8 @@ import com.stario.launcher.ui.Measurements;
 import com.stario.launcher.ui.dialogs.DialogBackgroundDimmingController;
 import com.stario.launcher.ui.utils.LayoutSizeObserver;
 import com.stario.launcher.ui.utils.UiUtils;
+import com.stario.launcher.utils.RootManager;
+import com.stario.launcher.utils.objects.ObservableObject;
 
 public class Settings extends ThemedActivity {
 
@@ -101,8 +104,11 @@ public class Settings extends ThemedActivity {
     private View lowSpecContainer;
     private TextView iconPackName;
     private TextView hideCount;
+    private TextView rootStatus;
 
     // Misc
+    private ObservableObject.OnSet<Integer> statusBarListener;
+    private ObservableObject.OnSet<Integer> navBarListener;
     private ActivityResultLauncher<Intent> homeRoleLauncher;
     private BroadcastReceiver batterySaverReceiver;
 
@@ -134,7 +140,17 @@ public class Settings extends ThemedActivity {
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+
+        updateRootStatusSummary();
+    }
+
+    @Override
     protected void onDestroy() {
+        Measurements.removeStatusBarListener(statusBarListener);
+        Measurements.removeNavListener(navBarListener);
+
         super.onDestroy();
 
         if (batterySaverReceiver != null) {
@@ -182,6 +198,7 @@ public class Settings extends ThemedActivity {
         scroller = findViewById(R.id.scroller);
         iconPackName = findViewById(R.id.pack_name);
         hideCount = findViewById(R.id.hidden_count);
+        rootStatus = findViewById(R.id.root_status);
         lowSpecSwitch = findViewById(R.id.low_spec);
         searchEngineName = findViewById(R.id.engine_name);
         titleLandscape = findViewById(R.id.title_landscape);
@@ -212,13 +229,15 @@ public class Settings extends ThemedActivity {
 
     private void setupWindowInsets() {
         View container = findViewById(R.id.container);
-        Measurements.addStatusBarListener(value ->
+        statusBarListener = value ->
                 container.setPadding(container.getPaddingLeft(), value,
-                        container.getPaddingRight(), Measurements.getNavHeight()));
+                        container.getPaddingRight(), Measurements.getNavHeight());
+        Measurements.addStatusBarListener(statusBarListener);
 
-        Measurements.addNavListener(value ->
+        navBarListener = value ->
                 container.setPadding(container.getPaddingLeft(), Measurements.getSysUIHeight(),
-                        container.getPaddingRight(), value));
+                        container.getPaddingRight(), value);
+        Measurements.addNavListener(navBarListener);
 
         UiUtils.Notch.applyNotchMargin(findViewById(R.id.coordinator),
                 UiUtils.Notch.Treatment.CENTER);
@@ -445,6 +464,29 @@ public class Settings extends ThemedActivity {
                                 .putBoolean(Vibrations.PREFERENCE_ENTRY, checked)
                                 .apply());
 
+        updateRootStatusSummary();
+        findViewById(R.id.root_mode).setOnClickListener(new View.OnClickListener() {
+            private RootDialog dialog;
+            private boolean showing = false;
+
+            @Override
+            public void onClick(View view) {
+                if (dialog == null) {
+                    dialog = new RootDialog(Settings.this);
+
+                    dialog.setOnDismissListener(d -> {
+                        updateRootStatusSummary();
+                        showing = false;
+                    });
+                }
+
+                if (!showing) {
+                    dialog.show();
+                    showing = true;
+                }
+            }
+        });
+
         findViewById(R.id.restart).setOnClickListener(view -> restart());
         findViewById(R.id.def_launcher).setOnClickListener(view -> requestDefaultLauncherRole());
     }
@@ -569,6 +611,42 @@ public class Settings extends ThemedActivity {
         }
 
         hideCount.setText(resources.getString(R.string.hidden_apps) + ": " + count);
+    }
+
+    private void updateRootStatusSummary() {
+        if (rootStatus == null) {
+            return;
+        }
+        RootManager rootManager = RootManager.getInstance(this);
+        RootManager.RootStatus cached = rootManager.getCachedStatus();
+        if (cached != null) {
+            applyRootStatusSummary(cached);
+        } else {
+            rootStatus.setText(R.string.root_status_checking);
+        }
+
+        rootManager.refreshStatusAsync(status -> {
+            if (!isDestroyed() && !isFinishing()) {
+                applyRootStatusSummary(status);
+            }
+        });
+    }
+
+    private void applyRootStatusSummary(RootManager.RootStatus status) {
+        if (rootStatus == null || status == null) {
+            return;
+        }
+        if (status.privilegedPermissionGranted) {
+            rootStatus.setText(R.string.root_status_privileged);
+        } else if (status.moduleState == RootManager.ModuleState.PENDING_REBOOT_INSTALL) {
+            rootStatus.setText(R.string.root_status_pending_reboot);
+        } else if (status.moduleState == RootManager.ModuleState.PENDING_REBOOT_REMOVE) {
+            rootStatus.setText(R.string.root_status_pending_remove);
+        } else if (status.rooted) {
+            rootStatus.setText(R.string.root_status_available);
+        } else {
+            rootStatus.setText(R.string.root_status_not_rooted);
+        }
     }
 
     // Utils

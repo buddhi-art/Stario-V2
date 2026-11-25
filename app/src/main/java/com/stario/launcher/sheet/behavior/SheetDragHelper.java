@@ -26,13 +26,14 @@ import android.view.VelocityTracker;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
-import android.view.animation.Interpolator;
-import android.widget.OverScroller;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.Px;
 import androidx.core.view.ViewCompat;
+import androidx.dynamicanimation.animation.FloatValueHolder;
+import androidx.dynamicanimation.animation.SpringAnimation;
+import androidx.dynamicanimation.animation.SpringForce;
 
 import java.util.Arrays;
 
@@ -66,8 +67,8 @@ public class SheetDragHelper {
      */
     public static final int STATE_SETTLING = 2;
 
-    private static final int BASE_SETTLE_DURATION = 200; // ms
-    private static final int MAX_SETTLE_DURATION = 400; // ms
+    private static final float SPRING_STIFFNESS = 420f;
+    private static final float SPRING_DAMPING_RATIO = SpringForce.DAMPING_RATIO_NO_BOUNCY;
 
     // Current drag state; idle, dragging or settling
     private int mDragState;
@@ -87,7 +88,14 @@ public class SheetDragHelper {
     private final float mMaxVelocity;
     private final float mMinVelocity;
 
-    private final OverScroller mScroller;
+    private SpringAnimation mSpringX;
+    private SpringAnimation mSpringY;
+    private FloatValueHolder mSpringValueX;
+    private FloatValueHolder mSpringValueY;
+    private int mTargetLeft;
+    private int mTargetTop;
+    private float mDragResidualX;
+    private float mDragResidualY;
 
     private final Callback mCallback;
 
@@ -239,14 +247,6 @@ public class SheetDragHelper {
         }
     }
 
-    /**
-     * Interpolator defining the animation curve for mScroller
-     */
-    private static final Interpolator sInterpolator = t -> {
-        t -= 1.0f;
-        return t * t * t * t * t + 1.0f;
-    };
-
     private final Runnable mSetIdleRunnable = () -> setDragState(STATE_IDLE);
 
     /**
@@ -278,7 +278,10 @@ public class SheetDragHelper {
         mTouchSlop = vc.getScaledTouchSlop();
         mMaxVelocity = vc.getScaledMaximumFlingVelocity();
         mMinVelocity = vc.getScaledMinimumFlingVelocity();
-        mScroller = new OverScroller(context, sInterpolator);
+    }
+
+    public int getViewDragState() {
+        return mDragState;
     }
 
     /**
@@ -295,8 +298,11 @@ public class SheetDragHelper {
                     + "of the ViewDragHelper's tracked parent view (" + mParentView + ")");
         }
 
+        cancelSprings();
         mCapturedView = childView;
         mActivePointerId = activePointerId;
+        mDragResidualX = 0f;
+        mDragResidualY = 0f;
         mCallback.onViewCaptured(childView, activePointerId);
         setDragState(STATE_DRAGGING);
     }
@@ -315,6 +321,8 @@ public class SheetDragHelper {
      */
     public void cancel() {
         mActivePointerId = INVALID_POINTER;
+        mDragResidualX = 0f;
+        mDragResidualY = 0f;
         clearMotionHistory();
 
         if (mVelocityTracker != null) {
@@ -329,15 +337,24 @@ public class SheetDragHelper {
      */
     public void abort() {
         cancel();
-        if (mDragState == STATE_SETTLING) {
-            final int oldX = mScroller.getCurrX();
-            final int oldY = mScroller.getCurrY();
-            mScroller.abortAnimation();
-            final int newX = mScroller.getCurrX();
-            final int newY = mScroller.getCurrY();
-            mCallback.onViewPositionChanged(mCapturedView, newX, newY, newX - oldX, newY - oldY);
-        }
+        cancelSprings();
         setDragState(STATE_IDLE);
+    }
+
+    private void cancelSprings() {
+        if (mSpringX != null) {
+            mSpringX.cancel();
+            mSpringX = null;
+        }
+        if (mSpringY != null) {
+            mSpringY.cancel();
+            mSpringY = null;
+        }
+    }
+
+    private boolean isAnySpringRunning() {
+        return (mSpringX != null && mSpringX.isRunning())
+                || (mSpringY != null && mSpringY.isRunning());
     }
 
     /**
@@ -376,6 +393,7 @@ public class SheetDragHelper {
      * @return true if animation should continue through {@link #continueSettling(boolean)} calls
      */
     public boolean smoothSlideViewTo(@NonNull View child, int finalLeft, int finalTop, int xvel, int yvel) {
+        cancelSprings();
         mCapturedView = child;
         mActivePointerId = INVALID_POINTER;
 
@@ -390,7 +408,8 @@ public class SheetDragHelper {
     }
 
     /**
-     * Settle the captured view at the given (left, top) position.
+     * Settle the captured view at the given (left, top) position using a 120Hz SpringAnimation
+     * with direct touch velocity handoff.
      *
      * @param finalLeft Target left position for the captured view
      * @param finalTop  Target top position for the captured view
@@ -405,78 +424,120 @@ public class SheetDragHelper {
         final int dy = finalTop - startTop;
 
         if (dx == 0 && dy == 0) {
-            // Nothing to do. Send callbacks, be done.
-            mScroller.abortAnimation();
+            cancelSprings();
             setDragState(STATE_IDLE);
             return false;
         }
 
-        final int duration = computeSettleDuration(mCapturedView, dx, dy, xvel, yvel);
-        mScroller.startScroll(startLeft, startTop, dx, dy, duration);
+        mTargetLeft = finalLeft;
+        mTargetTop = finalTop;
+
+        float clampedXVel = clampMag((float) xvel, 0f, mMaxVelocity);
+        float clampedYVel = clampMag((float) yvel, 0f, mMaxVelocity);
 
         setDragState(STATE_SETTLING);
+
+        if (dx != 0) {
+            mSpringValueX = new FloatValueHolder(startLeft);
+            mSpringX = new SpringAnimation(mSpringValueX, finalLeft);
+            SpringForce forceX = new SpringForce(finalLeft);
+            forceX.setStiffness(SPRING_STIFFNESS);
+            forceX.setDampingRatio(SPRING_DAMPING_RATIO);
+            mSpringX.setSpring(forceX);
+            mSpringX.setStartValue(startLeft);
+            mSpringX.setStartVelocity(clampedXVel);
+            mSpringX.setMinimumVisibleChange(1f);
+            mSpringX.addUpdateListener((animation, value, velocity) -> {
+                if (mCapturedView != null && mDragState == STATE_SETTLING) {
+                    applySpringPosition(Math.round(value), mCapturedView.getTop());
+                }
+            });
+            mSpringX.addEndListener((animation, canceled, value, velocity) ->
+                    handleSpringEnd(canceled));
+        }
+
+        if (dy != 0) {
+            mSpringValueY = new FloatValueHolder(startTop);
+            mSpringY = new SpringAnimation(mSpringValueY, finalTop);
+            SpringForce forceY = new SpringForce(finalTop);
+            forceY.setStiffness(SPRING_STIFFNESS);
+            forceY.setDampingRatio(SPRING_DAMPING_RATIO);
+            mSpringY.setSpring(forceY);
+            mSpringY.setStartValue(startTop);
+            mSpringY.setStartVelocity(clampedYVel);
+            mSpringY.setMinimumVisibleChange(1f);
+            mSpringY.addUpdateListener((animation, value, velocity) -> {
+                if (mCapturedView != null && mDragState == STATE_SETTLING) {
+                    applySpringPosition(mCapturedView.getLeft(), Math.round(value));
+                }
+            });
+            mSpringY.addEndListener((animation, canceled, value, velocity) ->
+                    handleSpringEnd(canceled));
+        }
+
+        if (mSpringX != null) {
+            mSpringX.start();
+        }
+        if (mSpringY != null) {
+            mSpringY.start();
+        }
+
         return true;
     }
 
-    private int computeSettleDuration(View child, int dx, int dy, int xvel, int yvel) {
-        xvel = clampMag(xvel, (int) mMinVelocity, (int) mMaxVelocity);
-        yvel = clampMag(yvel, (int) mMinVelocity, (int) mMaxVelocity);
-        final int absDx = Math.abs(dx);
-        final int absDy = Math.abs(dy);
-        final int absXVel = Math.abs(xvel);
-        final int absYVel = Math.abs(yvel);
-        final int addedVel = absXVel + absYVel;
-        final int addedDistance = absDx + absDy;
+    private void applySpringPosition(int desiredLeft, int desiredTop) {
+        if (mCapturedView == null || mDragState != STATE_SETTLING) {
+            return;
+        }
+        final int oldLeft = mCapturedView.getLeft();
+        final int oldTop = mCapturedView.getTop();
 
-        final float xweight = xvel != 0 ? (float) absXVel / addedVel :
-                (float) absDx / addedDistance;
-        final float yweight = yvel != 0 ? (float) absYVel / addedVel :
-                (float) absDy / addedDistance;
+        int clampedLeft = desiredLeft;
+        int clampedTop = desiredTop;
 
-        int xduration = computeAxisDuration(dx, xvel, mCallback.getViewHorizontalDragRange(child));
-        int yduration = computeAxisDuration(dy, yvel, mCallback.getViewVerticalDragRange(child));
-
-        return (int) (xduration * xweight + yduration * yweight);
-    }
-
-    private int computeAxisDuration(int delta, int velocity, int motionRange) {
-        if (delta == 0) {
-            return 0;
+        if (desiredLeft != oldLeft) {
+            clampedLeft = mCallback.clampViewPositionHorizontal(mCapturedView, desiredLeft, desiredLeft - oldLeft);
+        }
+        if (desiredTop != oldTop) {
+            clampedTop = mCallback.clampViewPositionVertical(mCapturedView, desiredTop, desiredTop - oldTop);
         }
 
-        final int width = mParentView.getWidth();
-        final int halfWidth = width / 2;
-        final float distanceRatio = Math.min(1f, (float) Math.abs(delta) / width);
-        final float distance = halfWidth + halfWidth
-                * distanceInfluenceForSnapDuration(distanceRatio);
+        final int dx = clampedLeft - oldLeft;
+        final int dy = clampedTop - oldTop;
 
-        int duration;
-        velocity = Math.abs(velocity);
-        if (velocity != 0) {
-            duration = Math.round(1000f * Math.abs(distance / velocity));
-            duration = Math.max(duration, 150);
-        } else {
-            final float range = (float) Math.abs(delta) / motionRange;
-            duration = (int) ((range + 1) * BASE_SETTLE_DURATION);
+        if (dx != 0) {
+            ViewCompat.offsetLeftAndRight(mCapturedView, dx);
         }
-        return Math.min(duration, MAX_SETTLE_DURATION);
+        if (dy != 0) {
+            ViewCompat.offsetTopAndBottom(mCapturedView, dy);
+        }
+        if (dx != 0 || dy != 0) {
+            mCallback.onViewPositionChanged(mCapturedView, clampedLeft, clampedTop, dx, dy);
+        }
     }
 
-    /**
-     * Clamp the magnitude of value for absMin and absMax.
-     * If the value is below the minimum, it will be clamped to zero.
-     * If the value is above the maximum, it will be clamped to the maximum.
-     *
-     * @param value  Value to clamp
-     * @param absMin Absolute value of the minimum significant value to return
-     * @param absMax Absolute value of the maximum value to return
-     * @return The clamped value with the same sign as <code>value</code>
-     */
-    private int clampMag(int value, int absMin, int absMax) {
-        final int absValue = Math.abs(value);
-        if (absValue < absMin) return 0;
-        if (absValue > absMax) return value > 0 ? absMax : -absMax;
-        return value;
+    private void handleSpringEnd(boolean canceled) {
+        if (canceled || isAnySpringRunning()) {
+            return;
+        }
+        if (mDragState == STATE_SETTLING) {
+            if (mCapturedView != null) {
+                final int oldLeft = mCapturedView.getLeft();
+                final int oldTop = mCapturedView.getTop();
+                final int dx = mTargetLeft - oldLeft;
+                final int dy = mTargetTop - oldTop;
+                if (dx != 0) {
+                    ViewCompat.offsetLeftAndRight(mCapturedView, dx);
+                }
+                if (dy != 0) {
+                    ViewCompat.offsetTopAndBottom(mCapturedView, dy);
+                }
+                if (dx != 0 || dy != 0) {
+                    mCallback.onViewPositionChanged(mCapturedView, mTargetLeft, mTargetTop, dx, dy);
+                }
+            }
+            setDragState(STATE_IDLE);
+        }
     }
 
     /**
@@ -496,12 +557,6 @@ public class SheetDragHelper {
         return value;
     }
 
-    private float distanceInfluenceForSnapDuration(float f) {
-        f -= 0.5f; // center the values about 0.
-        f *= 0.3f * (float) Math.PI / 2.0f;
-        return (float) Math.sin(f);
-    }
-
     /**
      * Move the captured settling view by the appropriate amount for the current time.
      * If <code>continueSettling</code> returns true, the caller should call it again
@@ -515,31 +570,7 @@ public class SheetDragHelper {
      */
     public boolean continueSettling(boolean deferCallbacks) {
         if (mDragState == STATE_SETTLING) {
-            boolean keepGoing = mScroller.computeScrollOffset();
-            final int x = mScroller.getCurrX();
-            final int y = mScroller.getCurrY();
-            final int dx = x - mCapturedView.getLeft();
-            final int dy = y - mCapturedView.getTop();
-
-            if (dx != 0) {
-                ViewCompat.offsetLeftAndRight(mCapturedView, dx);
-            }
-            if (dy != 0) {
-                ViewCompat.offsetTopAndBottom(mCapturedView, dy);
-            }
-
-            if (dx != 0 || dy != 0) {
-                mCallback.onViewPositionChanged(mCapturedView, x, y, dx, dy);
-            }
-
-            if (keepGoing && x == mScroller.getFinalX() && y == mScroller.getFinalY()) {
-                // Close enough. The interpolator/scroller might think we're still moving
-                // but the user sure doesn't.
-                mScroller.abortAnimation();
-                keepGoing = false;
-            }
-
-            if (!keepGoing) {
+            if (!isAnySpringRunning()) {
                 if (deferCallbacks) {
                     mParentView.post(mSetIdleRunnable);
                 } else {
@@ -875,8 +906,12 @@ public class SheetDragHelper {
                     final int index = ev.findPointerIndex(mActivePointerId);
                     final float x = ev.getX(index);
                     final float y = ev.getY(index);
-                    final int idx = (int) (x - mLastMotionX[mActivePointerId]);
-                    final int idy = (int) (y - mLastMotionY[mActivePointerId]);
+                    final float totalDx = (x - mLastMotionX[mActivePointerId]) + mDragResidualX;
+                    final float totalDy = (y - mLastMotionY[mActivePointerId]) + mDragResidualY;
+                    final int idx = (int) totalDx;
+                    final int idy = (int) totalDy;
+                    mDragResidualX = totalDx - idx;
+                    mDragResidualY = totalDy - idy;
 
                     dragTo(mCapturedView.getLeft() + idx, mCapturedView.getTop() + idy, idx, idy);
 
@@ -991,10 +1026,10 @@ public class SheetDragHelper {
         mVelocityTracker.computeCurrentVelocity(1000, mMaxVelocity);
         final float xvel = clampMag(
                 mVelocityTracker.getXVelocity(mActivePointerId),
-                mMinVelocity, mMaxVelocity);
+                0f, mMaxVelocity);
         final float yvel = clampMag(
                 mVelocityTracker.getYVelocity(mActivePointerId),
-                mMinVelocity, mMaxVelocity);
+                0f, mMaxVelocity);
         dispatchViewReleased(xvel, yvel);
     }
 

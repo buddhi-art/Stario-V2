@@ -17,8 +17,6 @@
 
 package com.stario.launcher.activities.launcher.widgets.glance;
 
-import android.animation.Animator;
-import android.animation.AnimatorListenerAdapter;
 import android.app.Dialog;
 import android.content.Context;
 import android.content.pm.ActivityInfo;
@@ -28,12 +26,15 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
-import android.view.animation.PathInterpolator;
 
 import androidx.annotation.FloatRange;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.constraintlayout.widget.ConstraintLayout;
+import androidx.core.math.MathUtils;
+import androidx.dynamicanimation.animation.FloatValueHolder;
+import androidx.dynamicanimation.animation.SpringAnimation;
+import androidx.dynamicanimation.animation.SpringForce;
 import androidx.fragment.app.DialogFragment;
 
 import com.stario.launcher.preferences.Vibrations;
@@ -42,17 +43,14 @@ import com.stario.launcher.ui.Measurements;
 import com.stario.launcher.ui.common.glance.GlanceConstraintLayout;
 import com.stario.launcher.ui.dialogs.PersistentFullscreenDialog;
 import com.stario.launcher.ui.utils.HomeWatcher;
-import com.stario.launcher.ui.utils.animation.Animation;
 
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 public abstract class GlanceDialogExtension extends DialogFragment
         implements GlanceExtension {
-    private static final float X1 = 0.2f;
-    private static final float Y1 = 1f;
-    private static final float X2 = 0.4f;
-    private static final float Y2 = 1f;
+    private static final float SPRING_STIFFNESS = 380f;
+    private static final float SPRING_DAMPING = SpringForce.DAMPING_RATIO_NO_BOUNCY;
 
     private final View.OnLayoutChangeListener layoutChangeListener;
     private final List<TransitionListener> listeners;
@@ -61,6 +59,10 @@ public abstract class GlanceDialogExtension extends DialogFragment
 
     private PersistentFullscreenDialog dialog;
     private GlanceConstraintLayout container;
+    private FloatValueHolder progressHolder;
+    private SpringAnimation progressSpring;
+    private float collapsedScale;
+    private float currentProgress;
     private float targetTranslationY;
     private HomeWatcher homeWatcher;
     private boolean isHiding;
@@ -71,6 +73,8 @@ public abstract class GlanceDialogExtension extends DialogFragment
 
         this.listeners = new CopyOnWriteArrayList<>();
         this.targetTranslationY = 0;
+        this.collapsedScale = 0f;
+        this.currentProgress = 0f;
         this.isHiding = false;
 
         this.layoutChangeListener = (v, left, top, right, bottom,
@@ -170,6 +174,10 @@ public abstract class GlanceDialogExtension extends DialogFragment
 
     @Override
     public void onDestroyView() {
+        if (progressSpring != null) {
+            progressSpring.cancel();
+            progressSpring = null;
+        }
         if (container != null) {
             container.removeOnLayoutChangeListener(layoutChangeListener);
         }
@@ -248,9 +256,59 @@ public abstract class GlanceDialogExtension extends DialogFragment
         container.setLayoutParams(params);
     }
 
+    private void ensureProgressSpring() {
+        if (progressSpring != null) {
+            return;
+        }
+
+        progressHolder = new FloatValueHolder(currentProgress);
+        progressSpring = new SpringAnimation(progressHolder);
+
+        SpringForce force = new SpringForce();
+        force.setStiffness(SPRING_STIFFNESS);
+        force.setDampingRatio(SPRING_DAMPING);
+        progressSpring.setSpring(force);
+        progressSpring.setMinimumVisibleChange(0.001f);
+
+        progressSpring.addUpdateListener((animation, value, velocity) -> {
+            if (container == null) {
+                return;
+            }
+            float fraction = MathUtils.clamp(value, 0f, 1f);
+            currentProgress = fraction;
+
+            float scaleY = collapsedScale + (1f - collapsedScale) * fraction;
+            container.setScaleY(scaleY);
+            container.setTranslationY(targetTranslationY * fraction);
+            updateScalingInternal(fraction);
+        });
+
+        progressSpring.addEndListener((animation, canceled, value, velocity) -> {
+            if (canceled || container == null) {
+                return;
+            }
+            if (isHiding) {
+                currentProgress = 0f;
+                container.setScaleY(collapsedScale);
+                container.setTranslationY(0f);
+                updateScalingInternal(0f);
+                container.post(() -> {
+                    if (dialog != null && isHiding) {
+                        dialog.hide();
+                    }
+                });
+            } else {
+                currentProgress = 1f;
+                container.setScaleY(1f);
+                container.setTranslationY(targetTranslationY);
+                updateScalingInternal(1f);
+            }
+        });
+    }
+
     protected void show() {
         if (dialog != null && isEnabled() &&
-                !dialog.isShowing() && dialog.showDialog()) {
+                (!dialog.isShowing() && dialog.showDialog() || (dialog.isShowing() && isHiding))) {
             Vibrations.getInstance().vibrate();
             isHiding = false;
 
@@ -263,38 +321,21 @@ public abstract class GlanceDialogExtension extends DialogFragment
 
                     recalculatePosition();
 
-                    float scale = glance.getHeight() /
-                            container.getMeasuredHeight();
+                    int measuredHeight = container.getMeasuredHeight();
+                    float scale = measuredHeight > 0 ? glance.getHeight() / measuredHeight : 0f;
 
-                    if (scale >= 0 && !Float.isInfinite(scale)) {
-                        container.setScaleY(scale);
-                        container.setTranslationY(0);
+                    if (measuredHeight > 0 && scale >= 0f && !Float.isInfinite(scale)) {
+                        collapsedScale = scale;
+                        ensureProgressSpring();
 
-                        container.post(() -> container.animate()
-                                .scaleY(1)
-                                .translationY(targetTranslationY)
-                                .setInterpolator(new PathInterpolator(X1, Y1, X2, Y2))
-                                .setDuration(Animation.LONG.getDuration())
-                                .setUpdateListener(animation -> {
-                                    float fraction = animation.getAnimatedFraction();
+                        if (currentProgress <= 0f) {
+                            container.setScaleY(collapsedScale);
+                            container.setTranslationY(0f);
+                        }
 
-                                    updateScalingInternal(fraction);
-                                })
-                                .setListener(new AnimatorListenerAdapter() {
-                                    private boolean canceled = false;
-
-                                    @Override
-                                    public void onAnimationCancel(Animator animation) {
-                                        canceled = true;
-                                    }
-
-                                    @Override
-                                    public void onAnimationEnd(Animator animation) {
-                                        if (!canceled) {
-                                            updateScalingInternal(1);
-                                        }
-                                    }
-                                }));
+                        progressHolder.setValue(currentProgress);
+                        progressSpring.setStartValue(currentProgress);
+                        progressSpring.animateToFinalPosition(1f);
                     } else {
                         container.post(this);
                     }
@@ -310,7 +351,12 @@ public abstract class GlanceDialogExtension extends DialogFragment
             if (animate) {
                 hide();
             } else {
-                updateScalingInternal(0);
+                isHiding = true;
+                if (progressSpring != null) {
+                    progressSpring.cancel();
+                }
+                currentProgress = 0f;
+                updateScalingInternal(0f);
 
                 container.post(() -> dialog.hide());
             }
@@ -336,39 +382,36 @@ public abstract class GlanceDialogExtension extends DialogFragment
             return;
         }
 
+        if (isHiding && !force) {
+            return;
+        }
+
         isHiding = true;
 
-        if (container.getScaleY() == 1 || force) {
-            float targetScale = glance.getHeight() /
-                    container.getMeasuredHeight();
-
-            container.animate()
-                    .scaleY(targetScale)
-                    .translationY(0)
-                    .setInterpolator(new PathInterpolator(X1, Y1, X2, Y2))
-                    .setDuration(Animation.MEDIUM.getDuration())
-                    .setUpdateListener(animation -> {
-                        float fraction = 1f - (float) animation.getAnimatedValue();
-
-                        updateScalingInternal(fraction);
-                    }).setListener(new AnimatorListenerAdapter() {
-                        @Override
-                        public void onAnimationCancel(Animator animation) {
-                            updateScalingInternal(0);
-
-                            container.post(() -> dialog.hide());
-                        }
-
-                        @Override
-                        public void onAnimationEnd(Animator animation) {
-                            updateScalingInternal(0);
-
-                            container.post(() -> dialog.hide());
-                        }
-                    });
-
-            activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
+        int measuredHeight = container.getMeasuredHeight();
+        if (measuredHeight > 0) {
+            collapsedScale = glance.getHeight() / measuredHeight;
         }
+
+        ensureProgressSpring();
+        if (force) {
+            progressSpring.cancel();
+            currentProgress = 0f;
+            container.setScaleY(collapsedScale);
+            container.setTranslationY(0f);
+            updateScalingInternal(0f);
+            container.post(() -> {
+                if (dialog != null) {
+                    dialog.hide();
+                }
+            });
+        } else {
+            progressHolder.setValue(currentProgress);
+            progressSpring.setStartValue(currentProgress);
+            progressSpring.animateToFinalPosition(0f);
+        }
+
+        activity.setRequestedOrientation(ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED);
     }
 
     private void updateScalingInternal(@FloatRange(from = 0f, to = 1f) float fraction) {

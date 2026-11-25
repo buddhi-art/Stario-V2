@@ -719,13 +719,14 @@ public abstract class SheetBehavior<V extends View> extends CoordinatorLayout.Be
 
         @Override
         public void run() {
+            this.isPosted = false;
+
             if (dragHelper != null && dragHelper.continueSettling(true)) {
+                this.isPosted = true;
                 ViewCompat.postOnAnimation(view, this);
-            } else {
+            } else if (dragHelper == null || dragHelper.getViewDragState() == SheetDragHelper.STATE_IDLE) {
                 setStateInternal(targetState);
             }
-
-            this.isPosted = false;
         }
     }
 

@@ -17,9 +17,9 @@
 
 package com.stario.launcher.activities.launcher.widgets;
 
-import android.app.ActivityOptions;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.os.Bundle;
 import android.provider.AlarmClock;
 import android.view.View;
 
@@ -30,6 +30,7 @@ import com.stario.launcher.themes.ThemedActivity;
 import com.stario.launcher.ui.common.grid.DraggableGridItem;
 import com.stario.launcher.ui.common.grid.DynamicGridLayout;
 import com.stario.launcher.ui.utils.UiUtils;
+import com.stario.launcher.ui.utils.animation.AppTransitionManager;
 
 public class ClockWidget {
     public static final String CLOCK_WIDGET_KEY = "com.stario.HOMESCREEN_CLOCK_WIDGET_VISIBLE";
@@ -72,8 +73,9 @@ public class ClockWidget {
 
             Intent intent = new Intent(AlarmClock.ACTION_SHOW_ALARMS);
             if (intent.resolveActivity(activity.getPackageManager()) != null) {
-                activity.startActivity(intent, ActivityOptions.makeScaleUpAnimation(root,
-                        0, 0, root.getMeasuredWidth(), root.getMeasuredHeight()).toBundle());
+                Bundle options = AppTransitionManager.getInstance()
+                        .prepareIntentLaunch(activity, intent, root);
+                activity.startActivity(intent, options);
             }
         }));
 

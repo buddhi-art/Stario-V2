@@ -111,11 +111,11 @@ public class BottomSheetBehavior<V extends View> extends SheetBehavior<V> {
 
         if (state == STATE_DRAGGING) {
             if (yvel > 0 && currentTop > expandedOffset) {
-                settleChildTo(child, STATE_EXPANDED, child.getLeft(), expandedOffset, 0, (int) yvel);
+                settleChildTo(child, STATE_EXPANDED, child.getLeft(), expandedOffset, 0, (int) -yvel);
 
                 flung = true;
             } else if (yvel < 0 && currentTop < collapsedOffset) {
-                settleChildTo(child, STATE_COLLAPSED, child.getLeft(), collapsedOffset, 0, (int) yvel);
+                settleChildTo(child, STATE_COLLAPSED, child.getLeft(), collapsedOffset, 0, (int) -yvel);
 
                 flung = true;
             }

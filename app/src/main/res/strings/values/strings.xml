@@ -61,6 +61,34 @@
     <string name="icons">Icons</string>
     <string name="system_launcher">Reassign system launcher</string>
     <string name="app_info">App info</string>
+    <string name="root_mode">Root &amp; Privileged Mode</string>
+    <string name="root_section_controls">Root controls</string>
+    <string name="root_section_systemize">Systemize module</string>
+    <string name="root_enable">Enable root mode</string>
+    <string name="root_enable_description">Allow root shell actions and privileged capabilities</string>
+    <string name="root_screen_lock">Root screen lock</string>
+    <string name="root_screen_lock_description">Double tap home screen to lock via root without Accessibility</string>
+    <string name="root_remote_transitions">Privileged window transitions</string>
+    <string name="root_remote_transitions_description">Animate app windows directly out of and back into icon bounds</string>
+    <string name="root_remote_transitions_locked">Install systemize module and reboot to unlock</string>
+    <string name="root_status_checking">Checking root access…</string>
+    <string name="root_status_not_rooted">Root not detected</string>
+    <string name="root_status_available">Root available • Standard transitions</string>
+    <string name="root_status_privileged">Privileged transitions active</string>
+    <string name="root_status_pending_reboot">Module staged • Reboot required</string>
+    <string name="root_status_pending_remove">Removal staged • Reboot required</string>
+    <string name="root_provider_label">Root environment</string>
+    <string name="root_permission_label">Remote transition permission</string>
+    <string name="root_granted">Granted</string>
+    <string name="root_not_granted">Not granted</string>
+    <string name="root_systemize_description">Installs a Magisk / KernelSU / APatch module in /data/adb/modules/stario_privapp with a privapp-permissions allowlist so Stario can run real RemoteAnimation and RemoteTransition window morphs.</string>
+    <string name="root_install_module">Install module</string>
+    <string name="root_update_module">Update module</string>
+    <string name="root_uninstall_module">Remove module</string>
+    <string name="root_refresh">Refresh</string>
+    <string name="root_reboot_device">Reboot device</string>
+    <string name="root_reboot_confirm">Tap again to reboot</string>
+    <string name="root_denied_warning">Root access unavailable or denied by superuser manager.</string>
 
     <!-- Home pop-up -->
     <string name="media_player">Media player</string>

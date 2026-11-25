@@ -69,7 +69,7 @@ public class LauncherApplication implements Comparable<LauncherApplication> {
         if (info != null) {
             Rect[] sourceBoundsHolder = new Rect[1];
             Bundle options = AppTransitionManager.getInstance()
-                    .prepareAppLaunch(activity, info.getComponentName(), sourceView, sourceBoundsHolder);
+                    .prepareAppLaunch(activity, info.getComponentName(), handle, sourceView, sourceBoundsHolder);
 
             activity.getSystemService(LauncherApps.class)
                     .startMainActivity(info.getComponentName(),

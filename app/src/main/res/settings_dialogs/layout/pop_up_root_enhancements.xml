@@ -1,0 +1,418 @@
+<?xml version="1.0" encoding="utf-8"?><!--
+  ~ Copyright (C) 2026 Răzvan Albu
+  ~
+  ~ This program is free software: you can redistribute it and/or modify
+  ~ it under the terms of the GNU General Public License as published by
+  ~ the Free Software Foundation, either version 3 of the License, or
+  ~ (at your option) any later version.
+  ~
+  ~ This program is distributed in the hope that it will be useful,
+  ~ but WITHOUT ANY WARRANTY; without even the implied warranty of
+  ~ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+  ~ GNU General Public License for more details.
+  ~
+  ~ You should have received a copy of the GNU General Public License
+  ~ along with this program. If not, see <http://www.gnu.org/licenses/>
+  -->
+
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <com.stario.launcher.ui.common.FadingEdgeLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        app:edge="top|bottom"
+        app:size_bottom="20dp"
+        app:size_top="20dp">
+
+        <androidx.core.widget.NestedScrollView
+            android:id="@+id/scroller"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:fillViewport="true"
+            android:overScrollMode="never"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="20dp">
+
+                <carbon.widget.LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/ripple"
+                    android:orientation="vertical"
+                    android:padding="15dp"
+                    app:carbon_cornerRadius="20dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal">
+
+                        <ImageView
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:src="@drawable/ic_api" />
+
+                        <Space
+                            android:layout_width="10dp"
+                            android:layout_height="0px" />
+
+                        <TextView
+                            android:id="@+id/root_summary_title"
+                            android:layout_width="0px"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:fontFamily="@font/dm_sans_medium"
+                            android:letterSpacing="-0.03"
+                            android:text="@string/root_status_checking"
+                            android:textColor="?attr/colorOnSurface"
+                            android:textSize="20sp" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/root_refresh_btn"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:backgroundTint="@android:color/transparent"
+                            android:fontFamily="@font/dm_sans_regular"
+                            android:minWidth="0dp"
+                            android:paddingStart="8dp"
+                            android:paddingEnd="8dp"
+                            android:text="@string/root_refresh"
+                            android:textColor="?attr/colorTertiary"
+                            android:textSize="14sp" />
+
+                    </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/root_provider_text"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:fontFamily="@font/dm_sans_regular"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        android:id="@+id/root_permission_text"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="4dp"
+                        android:fontFamily="@font/dm_sans_regular"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="15sp" />
+
+                    <TextView
+                        android:id="@+id/root_feedback_text"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="8dp"
+                        android:fontFamily="@font/dm_sans_regular"
+                        android:textColor="?attr/colorTertiary"
+                        android:textSize="14sp"
+                        android:visibility="gone" />
+
+                </carbon.widget.LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginLeft="10dp"
+                    android:layout_marginBottom="10dp"
+                    android:fontFamily="@font/dm_sans_regular"
+                    android:paddingTop="32dp"
+                    android:text="@string/root_section_controls"
+                    android:textColor="?attr/colorSecondary"
+                    android:textSize="16sp" />
+
+                <carbon.widget.LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:divider="@drawable/transparent_divider_small"
+                    android:orientation="vertical"
+                    android:showDividers="middle"
+                    android:transitionGroup="true"
+                    app:carbon_cornerRadius="20dp">
+
+                    <carbon.widget.LinearLayout
+                        android:id="@+id/root_mode_container"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/ripple"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="7dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="7dp"
+                        app:carbon_cornerRadius="5dp">
+
+                        <ImageView
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:src="@drawable/ic_memory" />
+
+                        <Space
+                            android:layout_width="10dp"
+                            android:layout_height="0px" />
+
+                        <LinearLayout
+                            android:layout_width="0px"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:paddingTop="10dp"
+                            android:paddingBottom="10dp">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/dm_sans_medium"
+                                android:letterSpacing="-0.03"
+                                android:text="@string/root_enable"
+                                android:textColor="?attr/colorOnSurface"
+                                android:textSize="20sp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/dm_sans_regular"
+                                android:text="@string/root_enable_description"
+                                android:textColor="?attr/colorOnSurface"
+                                android:textSize="15sp" />
+
+                        </LinearLayout>
+
+                        <Space
+                            android:layout_width="10dp"
+                            android:layout_height="0px" />
+
+                        <com.google.android.material.materialswitch.MaterialSwitch
+                            android:id="@+id/root_mode_switch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false" />
+
+                    </carbon.widget.LinearLayout>
+
+                    <carbon.widget.LinearLayout
+                        android:id="@+id/root_lock_container"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/ripple"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="7dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="7dp"
+                        app:carbon_cornerRadius="5dp">
+
+                        <ImageView
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:src="@drawable/ic_lock" />
+
+                        <Space
+                            android:layout_width="10dp"
+                            android:layout_height="0px" />
+
+                        <LinearLayout
+                            android:layout_width="0px"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:paddingTop="10dp"
+                            android:paddingBottom="10dp">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/dm_sans_medium"
+                                android:letterSpacing="-0.03"
+                                android:text="@string/root_screen_lock"
+                                android:textColor="?attr/colorOnSurface"
+                                android:textSize="20sp" />
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/dm_sans_regular"
+                                android:text="@string/root_screen_lock_description"
+                                android:textColor="?attr/colorOnSurface"
+                                android:textSize="15sp" />
+
+                        </LinearLayout>
+
+                        <Space
+                            android:layout_width="10dp"
+                            android:layout_height="0px" />
+
+                        <com.google.android.material.materialswitch.MaterialSwitch
+                            android:id="@+id/root_lock_switch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false" />
+
+                    </carbon.widget.LinearLayout>
+
+                    <carbon.widget.LinearLayout
+                        android:id="@+id/root_transitions_container"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:background="@drawable/ripple"
+                        android:gravity="center_vertical"
+                        android:orientation="horizontal"
+                        android:paddingStart="15dp"
+                        android:paddingTop="7dp"
+                        android:paddingEnd="15dp"
+                        android:paddingBottom="7dp"
+                        app:carbon_cornerRadius="5dp">
+
+                        <ImageView
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:src="@drawable/ic_animation" />
+
+                        <Space
+                            android:layout_width="10dp"
+                            android:layout_height="0px" />
+
+                        <LinearLayout
+                            android:layout_width="0px"
+                            android:layout_height="wrap_content"
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:paddingTop="10dp"
+                            android:paddingBottom="10dp">
+
+                            <TextView
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/dm_sans_medium"
+                                android:letterSpacing="-0.03"
+                                android:text="@string/root_remote_transitions"
+                                android:textColor="?attr/colorOnSurface"
+                                android:textSize="20sp" />
+
+                            <TextView
+                                android:id="@+id/root_transitions_desc"
+                                android:layout_width="match_parent"
+                                android:layout_height="wrap_content"
+                                android:fontFamily="@font/dm_sans_regular"
+                                android:text="@string/root_remote_transitions_description"
+                                android:textColor="?attr/colorOnSurface"
+                                android:textSize="15sp" />
+
+                        </LinearLayout>
+
+                        <Space
+                            android:layout_width="10dp"
+                            android:layout_height="0px" />
+
+                        <com.google.android.material.materialswitch.MaterialSwitch
+                            android:id="@+id/root_transitions_switch"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:clickable="false" />
+
+                    </carbon.widget.LinearLayout>
+
+                </carbon.widget.LinearLayout>
+
+                <TextView
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginLeft="10dp"
+                    android:layout_marginBottom="10dp"
+                    android:fontFamily="@font/dm_sans_regular"
+                    android:paddingTop="32dp"
+                    android:text="@string/root_section_systemize"
+                    android:textColor="?attr/colorSecondary"
+                    android:textSize="16sp" />
+
+                <carbon.widget.LinearLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:background="@drawable/ripple"
+                    android:orientation="vertical"
+                    android:padding="15dp"
+                    app:carbon_cornerRadius="20dp">
+
+                    <TextView
+                        android:id="@+id/root_module_status"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:fontFamily="@font/dm_sans_medium"
+                        android:letterSpacing="-0.03"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="18sp" />
+
+                    <TextView
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="6dp"
+                        android:fontFamily="@font/dm_sans_regular"
+                        android:text="@string/root_systemize_description"
+                        android:textColor="?attr/colorOnSurface"
+                        android:textSize="15sp" />
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="12dp"
+                        android:gravity="end"
+                        android:orientation="horizontal">
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/root_reboot_btn"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="6dp"
+                            android:backgroundTint="@android:color/transparent"
+                            android:fontFamily="@font/dm_sans_regular"
+                            android:text="@string/root_reboot_device"
+                            android:textColor="?attr/colorTertiary"
+                            android:textSize="15sp"
+                            android:visibility="gone" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/root_uninstall_module_btn"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginEnd="6dp"
+                            android:backgroundTint="@android:color/transparent"
+                            android:fontFamily="@font/dm_sans_regular"
+                            android:text="@string/root_uninstall_module"
+                            android:textColor="?attr/colorTertiary"
+                            android:textSize="15sp"
+                            android:visibility="gone" />
+
+                        <com.google.android.material.button.MaterialButton
+                            android:id="@+id/root_install_module_btn"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:backgroundTint="?attr/colorTertiaryContainer"
+                            android:fontFamily="@font/dm_sans_regular"
+                            android:text="@string/root_install_module"
+                            android:textColor="?attr/colorOnTertiaryContainer"
+                            android:textSize="15sp" />
+
+                    </LinearLayout>
+
+                </carbon.widget.LinearLayout>
+
+            </LinearLayout>
+
+        </androidx.core.widget.NestedScrollView>
+
+    </com.stario.launcher.ui.common.FadingEdgeLayout>
+
+</LinearLayout>

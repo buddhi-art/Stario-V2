@@ -112,12 +112,12 @@ public class RightSheetBehavior<V extends View> extends SheetBehavior<V> {
         int currentLeft = child.getLeft();
 
         if (state == STATE_DRAGGING) {
-            if (xvel > 0 && currentLeft < expandedOffset) {
-                settleChildTo(child, STATE_EXPANDED, child.getLeft(), expandedOffset, (int) xvel, 0);
+            if (xvel > 0 && currentLeft > expandedOffset) {
+                settleChildTo(child, STATE_EXPANDED, expandedOffset, child.getTop(), (int) -xvel, 0);
 
                 flung = true;
-            } else if (xvel < 0 && currentLeft > collapsedOffset) {
-                settleChildTo(child, STATE_COLLAPSED, child.getLeft(), collapsedOffset, (int) xvel, 0);
+            } else if (xvel < 0 && currentLeft < collapsedOffset) {
+                settleChildTo(child, STATE_COLLAPSED, collapsedOffset, child.getTop(), (int) -xvel, 0);
 
                 flung = true;
             }
@@ -132,8 +132,8 @@ public class RightSheetBehavior<V extends View> extends SheetBehavior<V> {
 
         if (dx > 0) { // Left
             if (newLeft < expandedOffset) {
-                consumed[1] = currentLeft - expandedOffset;
-                ViewCompat.offsetLeftAndRight(child, -consumed[1]);
+                consumed[0] = currentLeft - expandedOffset;
+                ViewCompat.offsetLeftAndRight(child, -consumed[0]);
                 setStateInternal(STATE_EXPANDED);
             } else {
                 if (!draggable) {
@@ -141,7 +141,7 @@ public class RightSheetBehavior<V extends View> extends SheetBehavior<V> {
                     return;
                 }
 
-                consumed[1] = dx;
+                consumed[0] = dx;
                 ViewCompat.offsetLeftAndRight(child, -dx);
                 setStateInternal(STATE_DRAGGING);
             }
@@ -153,12 +153,12 @@ public class RightSheetBehavior<V extends View> extends SheetBehavior<V> {
                         return;
                     }
 
-                    consumed[1] = dx;
+                    consumed[0] = dx;
                     ViewCompat.offsetLeftAndRight(child, -dx);
                     setStateInternal(STATE_DRAGGING);
                 } else {
-                    consumed[1] = currentLeft - collapsedOffset;
-                    ViewCompat.offsetLeftAndRight(child, -consumed[1]);
+                    consumed[0] = currentLeft - collapsedOffset;
+                    ViewCompat.offsetLeftAndRight(child, -consumed[0]);
                     setStateInternal(STATE_COLLAPSED);
                 }
             }
@@ -169,7 +169,7 @@ public class RightSheetBehavior<V extends View> extends SheetBehavior<V> {
 
     @Override
     protected boolean startNestedScrollLogic(int axes) {
-        flung = true;
+        flung = false;
 
         return (axes & ViewCompat.SCROLL_AXIS_HORIZONTAL) != 0;
     }
@@ -296,13 +296,12 @@ public class RightSheetBehavior<V extends View> extends SheetBehavior<V> {
                 int left;
                 @SheetBehavior.State int targetState;
 
-                if (xvel == 0.f ||
-                        Measurements.dpToPx(ViewConfiguration.getMinimumFlingVelocity() +
-                                (ViewConfiguration.getMaximumFlingVelocity() -
-                                        ViewConfiguration.getMinimumFlingVelocity()) / 10f) > Math.abs(xvel)) {
+                float minFling = ViewConfiguration.get(releasedChild.getContext()).getScaledMinimumFlingVelocity();
+                if (Math.abs(xvel) < minFling) {
                     int currentLeft = releasedChild.getLeft();
+                    float projectedLeft = currentLeft + (xvel / 1000f) * 350f;
 
-                    if (currentLeft < (expandedOffset + collapsedOffset) / 2) {
+                    if (Math.abs(projectedLeft - expandedOffset) < Math.abs(projectedLeft - collapsedOffset)) {
                         left = expandedOffset;
                         targetState = STATE_EXPANDED;
                     } else {

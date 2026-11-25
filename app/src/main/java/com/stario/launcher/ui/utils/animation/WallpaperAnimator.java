@@ -22,6 +22,7 @@ import android.os.IBinder;
 import android.util.Log;
 import android.view.Window;
 
+import androidx.core.math.MathUtils;
 import androidx.dynamicanimation.animation.FloatValueHolder;
 import androidx.dynamicanimation.animation.SpringAnimation;
 import androidx.dynamicanimation.animation.SpringForce;
@@ -32,12 +33,12 @@ import dev.rikka.tools.refine.Refine;
 
 public class WallpaperAnimator {
     private static final String TAG = "WallpaperAnimation";
-    private static final float SPRING_STIFFNESS = 250f;
+    private static final float SPRING_STIFFNESS = 340f;
     private static final float SPRING_DAMPING = SpringForce.DAMPING_RATIO_NO_BOUNCY;
 
     private static WallpaperManagerHidden wallpaperManager;
     private static boolean hasLoggedMissingMethod = false;
-    private static float lastRecordedZoomValue = 0;
+    private static float lastRecordedZoomValue = 0f;
     private static SpringAnimation zoomSpring;
     private static FloatValueHolder zoomHolder;
     private static IBinder currentToken;
@@ -47,12 +48,14 @@ public class WallpaperAnimator {
             return;
         }
 
-        currentToken = getWindowToken(activity);
-        if (currentToken == null) {
+        IBinder token = getWindowToken(activity);
+        if (token == null || !token.isBinderAlive()) {
             return;
         }
+        currentToken = token;
 
         getWallpaperManager(activity);
+        zoom = MathUtils.clamp(zoom, 0f, 1f);
 
         if (zoomSpring == null) {
             zoomHolder = new FloatValueHolder(lastRecordedZoomValue);
@@ -62,28 +65,62 @@ public class WallpaperAnimator {
             spring.setStiffness(SPRING_STIFFNESS);
             spring.setDampingRatio(SPRING_DAMPING);
             zoomSpring.setSpring(spring);
+            zoomSpring.setMinimumVisibleChange(0.002f);
 
             zoomSpring.addUpdateListener((animation, value, velocity) -> {
-                lastRecordedZoomValue = value;
-                if (currentToken != null && wallpaperManager != null) {
-                    try {
-                        wallpaperManager.setWallpaperZoomOut(currentToken, lastRecordedZoomValue);
-                    } catch (NoSuchMethodError exception) {
-                        if (!hasLoggedMissingMethod) {
-                            Log.e(TAG, "WallpaperManager::setWallpaperZoomOut does not exist. This error message will not be shown again.");
-                            hasLoggedMissingMethod = true;
-                        }
-                        zoomSpring.cancel();
-                    }
-                }
+                lastRecordedZoomValue = MathUtils.clamp(value, 0f, 1f);
+                applyZoomInternal(currentToken, lastRecordedZoomValue);
             });
         }
 
-        if (zoom == lastRecordedZoomValue && !zoomSpring.isRunning()) {
+        if (Math.abs(zoom - lastRecordedZoomValue) < 0.001f && !zoomSpring.isRunning()) {
             return;
         }
 
         zoomSpring.animateToFinalPosition(zoom);
+    }
+
+    public static void updateZoomImmediate(Activity activity, float zoom) {
+        if (hasLoggedMissingMethod || activity == null) {
+            return;
+        }
+
+        IBinder token = getWindowToken(activity);
+        if (token == null || !token.isBinderAlive()) {
+            return;
+        }
+        currentToken = token;
+
+        getWallpaperManager(activity);
+        float clamped = MathUtils.clamp(zoom, 0f, 1f);
+
+        if (zoomSpring != null && zoomSpring.isRunning()) {
+            zoomSpring.cancel();
+        }
+        if (zoomHolder != null) {
+            zoomHolder.setValue(clamped);
+        }
+        lastRecordedZoomValue = clamped;
+        applyZoomInternal(token, clamped);
+    }
+
+    private static void applyZoomInternal(IBinder token, float zoom) {
+        if (token == null || !token.isBinderAlive() || wallpaperManager == null) {
+            return;
+        }
+        try {
+            wallpaperManager.setWallpaperZoomOut(token, zoom);
+        } catch (NoSuchMethodError exception) {
+            if (!hasLoggedMissingMethod) {
+                Log.e(TAG, "WallpaperManager::setWallpaperZoomOut does not exist. This error message will not be shown again.");
+                hasLoggedMissingMethod = true;
+            }
+            if (zoomSpring != null) {
+                zoomSpring.cancel();
+            }
+        } catch (Throwable ignored) {
+            // Window token can temporarily become invalid during transitions
+        }
     }
 
     private static WallpaperManagerHidden getWallpaperManager(Activity activity) {

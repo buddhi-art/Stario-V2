@@ -27,7 +27,9 @@ import android.content.res.Resources;
 import android.os.Build;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewConfiguration;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.animation.DecelerateInterpolator;
@@ -35,6 +37,10 @@ import android.view.animation.DecelerateInterpolator;
 import androidx.activity.OnBackPressedCallback;
 import androidx.core.content.res.ResourcesCompat;
 import androidx.core.math.MathUtils;
+import androidx.dynamicanimation.animation.DynamicAnimation;
+import androidx.dynamicanimation.animation.SpringAnimation;
+import androidx.dynamicanimation.animation.SpringForce;
+import androidx.lifecycle.Lifecycle;
 
 import com.stario.launcher.R;
 import com.stario.launcher.activities.launcher.sheets.LauncherSheets;
@@ -55,19 +61,26 @@ import com.stario.launcher.ui.back.BackEvent;
 import com.stario.launcher.ui.back.BackGestureEventBus;
 import com.stario.launcher.ui.common.grid.DynamicGridLayout;
 import com.stario.launcher.ui.common.lock.ClosingAnimationView;
+import com.stario.launcher.ui.common.lock.LockDetector;
 import com.stario.launcher.ui.popup.PopupMenu;
 import com.stario.launcher.ui.utils.HomeWatcher;
 import com.stario.launcher.ui.utils.UiUtils;
 import com.stario.launcher.ui.utils.animation.Animation;
 import com.stario.launcher.ui.utils.animation.AppTransitionManager;
 import com.stario.launcher.ui.utils.animation.WallpaperAnimator;
+import com.stario.launcher.utils.RootManager;
 import com.stario.launcher.utils.Utils;
+import com.stario.launcher.utils.objects.ObservableObject;
 
 public class Launcher extends ThemedActivity {
     public static final String INTENT_KILL_TASK_ID_EXTRA = "com.stario.launcher.INTENT_KILL_TASK_ID_EXTRA";
     public static final String ACTION_KILL_TASK = "com.stario.launcher.ACTION_KILL_TASK";
 
+    private ObservableObject.OnSet<Integer> statusBarListener;
+    private ObservableObject.OnSet<Integer> navBarListener;
     private BackGestureEventBus.BackEventListener backEventListener;
+    private SpringAnimation controllerScaleXSpring;
+    private SpringAnimation controllerScaleYSpring;
     private BroadcastReceiver screenOnReceiver;
     private SheetsFocusController controller;
     private BroadcastReceiver killReceiver;
@@ -77,6 +90,7 @@ public class Launcher extends ThemedActivity {
     private SearchWidget searchWidget;
     private ClockWidget clockWidget;
     private HomeWatcher homeWatcher;
+    private boolean isRearrangeable;
     private boolean showWhenLocked;
     private View statusBarContrast;
     private View navBarContrast;
@@ -165,15 +179,17 @@ public class Launcher extends ThemedActivity {
         // noinspection ClickableViewAccessibility
         navBarContrast.setOnTouchListener((v, event) -> false);
 
-        Measurements.addNavListener(value -> {
+        navBarListener = value -> {
             navBarContrast.getLayoutParams().height = (int) (value * 1.5f);
             navBarContrast.requestLayout();
-        });
+        };
+        Measurements.addNavListener(navBarListener);
 
-        Measurements.addStatusBarListener(value -> {
+        statusBarListener = value -> {
             statusBarContrast.getLayoutParams().height = (int) (value * 1.5f);
             statusBarContrast.requestLayout();
-        });
+        };
+        Measurements.addStatusBarListener(statusBarListener);
 
         UiUtils.Notch.applyNotchMargin(controller, UiUtils.Notch.Treatment.CENTER);
         controller.setOnLongClickListener((v) -> {
@@ -182,6 +198,8 @@ public class Launcher extends ThemedActivity {
             displayLauncherOptions(this, controller);
             return true;
         });
+
+        attachRootDoubleTapLock();
 
         screenOnReceiver = new BroadcastReceiver() {
             @Override
@@ -201,6 +219,81 @@ public class Launcher extends ThemedActivity {
         attachGlance(container);
         attachSearch(container);
         attachClock(container);
+        AppTransitionManager.getInstance().syncRemoteReturnRegistration(this, container);
+    }
+
+    @SuppressLint("ClickableViewAccessibility")
+    private void attachRootDoubleTapLock() {
+        final ViewConfiguration vc = ViewConfiguration.get(this);
+        final int touchSlopSq = vc.getScaledTouchSlop() * vc.getScaledTouchSlop();
+        final int doubleTapSlopSq = vc.getScaledDoubleTapSlop() * vc.getScaledDoubleTapSlop();
+
+        controller.setOnTouchListener(new View.OnTouchListener() {
+            private long lastTapUpTimeMs = 0L;
+            private float lastTapX = 0f;
+            private float lastTapY = 0f;
+            private float downX = 0f;
+            private float downY = 0f;
+            private boolean moved = false;
+
+            @Override
+            public boolean onTouch(View v, MotionEvent event) {
+                switch (event.getActionMasked()) {
+                    case MotionEvent.ACTION_DOWN:
+                        downX = event.getX();
+                        downY = event.getY();
+                        moved = false;
+                        break;
+                    case MotionEvent.ACTION_MOVE: {
+                        float dx = event.getX() - downX;
+                        float dy = event.getY() - downY;
+                        if (dx * dx + dy * dy > touchSlopSq) {
+                            moved = true;
+                        }
+                        break;
+                    }
+                    case MotionEvent.ACTION_UP:
+                        if (!moved && !isRearrangeable
+                                && !controller.hasSheetFocus() && !glance.hasFocus()) {
+                            long now = System.currentTimeMillis();
+                            float dx = event.getX() - lastTapX;
+                            float dy = event.getY() - lastTapY;
+
+                            if (lastTapUpTimeMs > 0
+                                    && (now - lastTapUpTimeMs) < ViewConfiguration.getDoubleTapTimeout()
+                                    && (dx * dx + dy * dy) <= doubleTapSlopSq) {
+                                lastTapUpTimeMs = 0L;
+
+                                boolean accessibilityLockActive = Utils.isAccessibilityServiceEnabled(Launcher.this)
+                                        && getApplicationContext().getSettings()
+                                        .getBoolean(LockDetector.PREFERENCE_ENTRY, false);
+                                if (!accessibilityLockActive
+                                        && RootManager.getInstance(Launcher.this).isRootScreenLockEnabled()) {
+                                    boolean legacy = getApplicationContext().getSettings()
+                                            .getBoolean(LockDetector.LEGACY_ANIMATION, false);
+                                    if (!legacy) {
+                                        main.closeTo(event.getRawX(), event.getRawY(),
+                                                () -> RootManager.getInstance(Launcher.this).lockScreenAsync(null));
+                                    } else {
+                                        RootManager.getInstance(Launcher.this).lockScreenAsync(null);
+                                    }
+                                }
+                            } else {
+                                lastTapUpTimeMs = now;
+                                lastTapX = event.getX();
+                                lastTapY = event.getY();
+                            }
+                        } else {
+                            lastTapUpTimeMs = 0L;
+                        }
+                        break;
+                    case MotionEvent.ACTION_CANCEL:
+                        lastTapUpTimeMs = 0L;
+                        break;
+                }
+                return false;
+            }
+        });
     }
 
     private void attachPinnedCategory(DynamicGridLayout container) {
@@ -300,9 +393,13 @@ public class Launcher extends ThemedActivity {
                             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                             .putExtra("com.android.wallpaper.LAUNCH_SOURCE", "app_launched_launcher");
 
-                    activity.startActivity(intent,
-                            ActivityOptions.makeScaleUpAnimation(view, 0, 0,
-                                    view.getWidth(), view.getHeight()).toBundle());
+                    try {
+                        Bundle options = AppTransitionManager.getInstance()
+                                .prepareIntentLaunch(activity, intent, view);
+                        activity.startActivity(intent, options);
+                    } catch (Exception exception) {
+                        Log.e("Launcher", "Unable to launch wallpaper picker.", exception);
+                    }
                 })));
 
         menu.showAtLocation(activity, controller, controller.getLastX(),
@@ -375,12 +472,17 @@ public class Launcher extends ThemedActivity {
             Log.e("Launcher", "onDestroy: Kill receiver was not registered.");
         }
 
+        Measurements.removeNavListener(navBarListener);
+        Measurements.removeStatusBarListener(statusBarListener);
+        cancelControllerSprings();
+
         pinnedCategory.detach();
         searchWidget.detach();
         clockWidget.detach();
 
         LauncherSheets.detach(this);
         Measurements.unregisterContentObservers(this);
+        AppTransitionManager.getInstance().unregisterRemoteReturnTransitions(this);
 
         super.onDestroy();
     }
@@ -399,16 +501,28 @@ public class Launcher extends ThemedActivity {
                 controller.hideAllSheets();
             }
 
-            AppTransitionManager.getInstance().onReturnToHome(this);
+            // Defer clearing/animating return target until onResume() when Launcher & controller are visible
+            AppTransitionManager.getInstance().markPendingReturnFromHome();
+
+            if (getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED)
+                    && controller != null) {
+                controller.post(() -> {
+                    if (getLifecycle().getCurrentState().isAtLeast(Lifecycle.State.RESUMED)) {
+                        settleControllerToRest();
+                        AppTransitionManager.getInstance().onReturnToHome(Launcher.this, controller, container);
+                    }
+                });
+            }
         }
     }
 
     @Override
     protected void onResume() {
+        super.onResume();
+
         glance.update();
         updateWallpaperZoom(0f);
-
-        AppTransitionManager.getInstance().onReturnToHome(this);
+        AppTransitionManager.getInstance().syncRemoteReturnRegistration(this, container);
 
         View root = getRoot();
         root.setVisibility(View.VISIBLE);
@@ -421,14 +535,56 @@ public class Launcher extends ThemedActivity {
         BackGestureEventBus.getInstance().removeListener(backEventListener);
         backEventListener = null;
 
-        controller.animate()
-                .alpha(1)
-                .scaleX(1)
-                .scaleY(1)
-                .setDuration(Animation.LONG.getDuration())
-                .setInterpolator(new DecelerateInterpolator(2));
+        settleControllerToRest();
 
-        super.onResume();
+        if (controller.isLaidOut()) {
+            AppTransitionManager.getInstance().onReturnToHome(this, controller, container);
+        } else {
+            controller.post(() -> AppTransitionManager.getInstance()
+                    .onReturnToHome(Launcher.this, controller, container));
+        }
+    }
+
+    private void settleControllerToRest() {
+        if (controller == null) {
+            return;
+        }
+        controller.animate().cancel();
+        controller.setVisibility(View.VISIBLE);
+
+        if (controller.getAlpha() < 1f) {
+            controller.animate()
+                    .alpha(1f)
+                    .setDuration(Animation.SHORT.getDuration())
+                    .setInterpolator(new DecelerateInterpolator(2f))
+                    .start();
+        }
+
+        if (controller.getScaleX() != 1f || controller.getScaleY() != 1f) {
+            cancelControllerSprings();
+
+            controllerScaleXSpring = new SpringAnimation(controller, DynamicAnimation.SCALE_X, 1f);
+            controllerScaleXSpring.getSpring().setStiffness(380f);
+            controllerScaleXSpring.getSpring().setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY);
+
+            controllerScaleYSpring = new SpringAnimation(controller, DynamicAnimation.SCALE_Y, 1f);
+            controllerScaleYSpring.getSpring().setStiffness(380f);
+            controllerScaleYSpring.getSpring().setDampingRatio(SpringForce.DAMPING_RATIO_NO_BOUNCY);
+
+            controllerScaleXSpring.start();
+            controllerScaleYSpring.start();
+        }
+    }
+
+    private void cancelControllerSprings() {
+        if (controllerScaleXSpring != null) {
+            controllerScaleXSpring.cancel();
+            controllerScaleXSpring = null;
+        }
+        if (controllerScaleYSpring != null) {
+            controllerScaleYSpring.cancel();
+            controllerScaleYSpring = null;
+        }
     }
 
     @Override
@@ -451,6 +607,7 @@ public class Launcher extends ThemedActivity {
     }
 
     private void setRearrangeable(boolean value) {
+        this.isRearrangeable = value;
         if (controller != null && container != null) {
             container.setRearrangeable(value);
             controller.setControllerEnabled(!value);
@@ -485,9 +642,13 @@ public class Launcher extends ThemedActivity {
             startActivity(intent);
         }
 
-        controller.setAlpha(0);
-        controller.setScaleX(0.9f);
-        controller.setScaleY(0.9f);
+        cancelControllerSprings();
+        controller.animate().cancel();
+        if (!AppTransitionManager.getInstance().isRemoteReturnAnimating()) {
+            controller.setAlpha(0.85f);
+            controller.setScaleX(0.94f);
+            controller.setScaleY(0.94f);
+        }
     }
 
     @Override
